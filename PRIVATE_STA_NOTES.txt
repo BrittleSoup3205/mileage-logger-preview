@@ -1,0 +1,23 @@
+PRIVATE STA BUILD — CHANGE SUMMARY
+==================================
+
+- Removed sta/STA_Master.pdf from the public web package.
+- Removed the master from service-worker precaching.
+- Added Import STA Master.
+- Added Replace STA Master.
+- Added Remove Private Master.
+- Stores the imported PDF in IndexedDB on the current device.
+- Validates the two-page form and required field names before saving it.
+- Disables STA generation until the private master is installed.
+- Generated PDFs remain flattened.
+- Mileage/GPS backup does not contain the master.
+
+REQUIRED FIELDS VALIDATED
+-------------------------
+Box 1
+Box 4
+Box 5
+Box 6
+Box 8
+Box 16
+Box 17

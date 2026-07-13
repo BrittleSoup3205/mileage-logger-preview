@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14213d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Mileage GPS">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="description" content="A private, offline-capable work mileage logger with GPS verification.">
+  <title>Mileage Logger GPS</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Mileage Logger</h1>
+      <p id="todayLine" class="topbar-subtitle"></p>
+    </div>
+    <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle appearance">◐</button>
+  </header>
+
+  <main class="app-shell">
+    <noscript>
+      <section class="card error-card">JavaScript must be enabled for this app to work.</section>
+    </noscript>
+
+    <section id="secureWarning" class="card warning-card hidden">
+      <strong>GPS requires a secure website.</strong>
+      <p>This page must be opened from an HTTPS address or localhost. Basic mileage logging still works without GPS.</p>
+    </section>
+
+    <section class="card status-card" aria-live="polite">
+      <div class="status-heading">
+        <div>
+          <p class="eyebrow">Current status</p>
+          <h2 id="statusTitle">Loading…</h2>
+        </div>
+        <span id="statusPill" class="pill">—</span>
+      </div>
+      <div id="activeDetails" class="active-details"></div>
+    </section>
+
+    <section id="backupCard" class="card backup-card" aria-labelledby="backupTitle">
+      <div class="status-heading">
+        <div>
+          <p class="eyebrow">Required data protection</p>
+          <h2 id="backupTitle">Backup Status</h2>
+        </div>
+        <span id="backupPill" class="pill">CHECKING</span>
+      </div>
+
+      <div id="backupStatusText" class="backup-status-text">Checking backup status…</div>
+
+      <div class="backup-actions">
+        <button id="backupNowBtn" class="button button-backup" type="button">Save Full Backup to Files</button>
+        <button id="backupCsvBtn" class="button button-secondary" type="button">Export CSV Copy</button>
+        <button id="restoreBackupBtn" class="button button-secondary" type="button">Restore a Backup</button>
+      </div>
+
+      <p class="privacy-note compact-note">
+        After every completed trip, the app opens the iPhone share sheet with a complete restore file.
+        Choose <strong>Save to Files</strong>, select an iCloud Drive folder, tap <strong>Save</strong>, then confirm the save in the app.
+        A new trip is blocked until the prior completed trip has a confirmed backup.
+      </p>
+    </section>
+
+    <section class="quick-actions" aria-label="Quick actions">
+      <button id="startBtn" class="button button-primary button-large" type="button">Start Trip</button>
+      <button id="endBtn" class="button button-danger button-large" type="button">End Trip</button>
+      <button id="staBtn" class="button button-sta button-large" type="button">Create STA</button>
+      <button id="logBtn" class="button button-secondary button-large" type="button">View Log</button>
+      <button id="exportBtn" class="button button-secondary button-large" type="button">Export CSV</button>
+    </section>
+
+    <section id="startSection" class="card collapsible hidden" aria-labelledby="startTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">New trip</p>
+          <h2 id="startTitle">Start Trip</h2>
+        </div>
+        <button class="button button-quiet button-small" type="button" data-close="startSection">Close</button>
+      </div>
+
+      <form id="startForm" autocomplete="off">
+        <label>
+          Starting odometer
+          <input id="startOdo" inputmode="decimal" required placeholder="Example: 53,291.8">
+          <small>The last ending odometer is filled automatically.</small>
+        </label>
+
+        <label>
+          Project number
+          <input id="projectNumber" placeholder="Example: E10379-424">
+          <small>Used on the STA form and stored with the trip.</small>
+        </label>
+
+        <label>
+          Customer
+          <input id="customer" list="customerList" required placeholder="Example: Shell">
+          <datalist id="customerList"></datalist>
+        </label>
+
+        <label>
+          Vendor or destination
+          <input id="vendor" list="vendorList" required placeholder="Example: Repcon">
+          <datalist id="vendorList"></datalist>
+        </label>
+
+        <label>
+          Purpose
+          <input id="purpose" list="purposeList" required placeholder="Example: Inspection">
+          <datalist id="purposeList"></datalist>
+        </label>
+
+        <label>
+          Notes
+          <textarea id="startNotes" rows="3" placeholder="Optional"></textarea>
+        </label>
+
+        <section class="gps-panel" aria-labelledby="startGpsTitle">
+          <div class="gps-panel-heading">
+            <div>
+              <p class="eyebrow">GPS verification</p>
+              <h3 id="startGpsTitle">Starting Location</h3>
+            </div>
+            <button id="captureStartGpsBtn" class="button button-secondary button-small" type="button">Capture GPS</button>
+          </div>
+          <div id="startGpsStatus" class="gps-status">No starting location captured.</div>
+          <div id="vendorSuggestion" class="suggestion hidden"></div>
+        </section>
+
+        <label class="checkbox-row">
+          <input id="trackRoute" type="checkbox">
+          <span>Track the route while this web app remains open</span>
+        </label>
+        <small class="under-checkbox">Route tracking may pause when the iPhone screen locks or another app is used.</small>
+
+        <div class="form-actions">
+          <button class="button button-primary" type="submit">Save Start</button>
+          <button class="button button-secondary" type="button" data-close="startSection">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="endSection" class="card collapsible hidden" aria-labelledby="endTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Finish current trip</p>
+          <h2 id="endTitle">End Trip</h2>
+        </div>
+        <button class="button button-quiet button-small" type="button" data-close="endSection">Close</button>
+      </div>
+
+      <form id="endForm" autocomplete="off">
+        <div id="endTripSummary" class="summary-box"></div>
+
+        <label>
+          Ending odometer
+          <input id="endOdo" inputmode="decimal" required placeholder="Example: 53,326.2">
+          <small>Must be equal to or greater than the starting odometer.</small>
+        </label>
+
+        <label>
+          End notes
+          <textarea id="endNotes" rows="3" placeholder="Optional"></textarea>
+        </label>
+
+        <section class="gps-panel" aria-labelledby="endGpsTitle">
+          <div class="gps-panel-heading">
+            <div>
+              <p class="eyebrow">GPS verification</p>
+              <h3 id="endGpsTitle">Ending Location</h3>
+            </div>
+            <button id="captureEndGpsBtn" class="button button-secondary button-small" type="button">Capture GPS</button>
+          </div>
+          <div id="endGpsStatus" class="gps-status">No ending location captured.</div>
+        </section>
+
+        <div id="milesPreview" class="miles-preview hidden"></div>
+        <div id="gpsComparison" class="comparison-box hidden"></div>
+
+        <div class="form-actions">
+          <button class="button button-danger" type="submit">Save Completed Trip</button>
+          <button class="button button-secondary" type="button" data-close="endSection">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="staSection" class="card collapsible hidden" aria-labelledby="staTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Safety task analysis</p>
+          <h2 id="staTitle">Create STA</h2>
+        </div>
+        <button class="button button-quiet button-small" type="button" data-close="staSection">Close</button>
+      </div>
+
+      <section class="private-master-panel" aria-labelledby="privateMasterTitle">
+        <div class="private-master-heading">
+          <div>
+            <p class="eyebrow">Stored only on this device</p>
+            <h3 id="privateMasterTitle">Private STA Master</h3>
+          </div>
+          <span id="staMasterPill" class="pill">CHECKING</span>
+        </div>
+
+        <div id="staMasterInstallStatus" class="private-master-status">
+          Checking this device for an imported STA master…
+        </div>
+
+        <div class="form-actions wrap">
+          <button id="importStaMasterBtn" class="button button-sta" type="button">Import STA Master</button>
+          <button id="removeStaMasterBtn" class="button button-danger-outline" type="button" disabled>Remove Private Master</button>
+          <input id="staMasterFileInput" class="hidden" type="file" accept="application/pdf,.pdf">
+        </div>
+
+        <p class="privacy-note compact-note">
+          The master PDF is not included in the hosted website. After import, it is stored privately in this browser on this device.
+          Clearing Safari website data or deleting the web app can remove it, so keep the original PDF in Files.
+        </p>
+      </section>
+
+      <div id="staSourceSummary" class="summary-box"></div>
+
+      <form id="staForm" autocomplete="off">
+        <label>
+          Project number
+          <input id="staProjectNumber" placeholder="Example: E10379-424">
+          <small>This fills both project-number boxes on page 1.</small>
+        </label>
+
+        <div class="coordinate-grid">
+          <label>
+            Date
+            <input id="staDate" placeholder="MM/DD/YYYY">
+          </label>
+          <label>
+            Time
+            <input id="staTime" placeholder="8:30 AM">
+          </label>
+          <label>
+            Task location
+            <input id="staTaskLocation" placeholder="Vendor, unit, or building">
+          </label>
+        </div>
+
+        <div class="coordinate-grid two-column">
+          <label>
+            Safety contact name
+            <input id="staSafetyContact" placeholder="Facility safety contact">
+          </label>
+          <label>
+            Safety contact phone
+            <input id="staSafetyPhone" inputmode="tel" placeholder="(000) 000-0000">
+          </label>
+        </div>
+
+        <div class="sta-lock-note">
+          <strong>Master protections:</strong> After you privately import the approved master, the app fills only its seven existing text fields.
+          It does not change the printed task descriptions, comments, Yes/No choices, Safe/At Risk bubbles, or other master-page content.
+          The generated PDF is flattened.
+        </div>
+
+        <div class="form-actions wrap">
+          <button id="shareStaBtn" class="button button-primary" type="button">Generate and Share STA PDF</button>
+          <button id="downloadStaBtn" class="button button-secondary" type="button">Download STA PDF</button>
+          <button class="button button-secondary" type="button" data-close="staSection">Cancel</button>
+        </div>
+
+        <div id="staStatus" class="gps-status">Ready to generate from the locked master.</div>
+      </form>
+    </section>
+
+    <section id="logSection" class="card collapsible hidden" aria-labelledby="logTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Saved records</p>
+          <h2 id="logTitle">Trip Log</h2>
+          <p id="logSummary" class="muted"></p>
+        </div>
+        <button class="button button-quiet button-small" type="button" data-close="logSection">Close</button>
+      </div>
+
+      <div class="log-toolbar">
+        <input id="searchBox" class="search-input" placeholder="Search customer, vendor, purpose, or notes">
+        <button id="clearSearch" class="button button-secondary button-small" type="button">Clear Search</button>
+      </div>
+
+      <div id="emptyLog" class="empty-state hidden">No completed trips have been saved yet.</div>
+
+      <div class="table-wrap">
+        <table id="tripTable">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Project</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Start Odo</th>
+              <th>End Odo</th>
+              <th>Odo Miles</th>
+              <th>GPS Miles</th>
+              <th>Difference</th>
+              <th>Customer</th>
+              <th>Vendor</th>
+              <th>Purpose</th>
+              <th>STA</th>
+              <th>Maps</th>
+              <th>Notes</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="form-actions wrap">
+        <button id="exportBtn2" class="button button-secondary" type="button">Export CSV</button>
+        <button id="backupBtn" class="button button-secondary" type="button">Save Full Backup</button>
+        <button id="importBtn" class="button button-secondary" type="button">Restore Backup</button>
+        <input id="importFile" class="hidden" type="file" accept="application/json,.json">
+      </div>
+    </section>
+
+    <section id="settingsSection" class="card" aria-labelledby="settingsTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Preferences</p>
+          <h2 id="settingsTitle">Settings</h2>
+        </div>
+      </div>
+
+      <div class="required-backup-note">
+        <strong>Backup rule:</strong> A full JSON restore file is required after every completed trip.
+        This rule cannot be turned off in this build because the mileage record is the primary purpose of the app.
+      </div>
+
+      <label class="checkbox-row">
+        <input id="roundMiles" type="checkbox">
+        <span>Round calculated miles to the nearest tenth</span>
+      </label>
+
+      <label class="checkbox-row">
+        <input id="autoCaptureGps" type="checkbox">
+        <span>Automatically request GPS when Start or End opens</span>
+      </label>
+
+      <label>
+        Maximum preferred GPS accuracy, meters
+        <input id="maxGpsAccuracy" inputmode="decimal" placeholder="100">
+        <small>The app will still allow less accurate readings, but it will show a warning.</small>
+      </label>
+
+      <label>
+        Mileage-difference warning, miles
+        <input id="differenceWarning" inputmode="decimal" placeholder="3">
+        <small>Warn when odometer miles and GPS route miles differ by at least this amount.</small>
+      </label>
+
+      <label>
+        Saved customers
+        <textarea id="savedCustomers" rows="4" placeholder="Enter one customer per line"></textarea>
+      </label>
+
+      <label>
+        Saved vendors
+        <textarea id="savedVendors" rows="6" placeholder="Enter one vendor per line"></textarea>
+      </label>
+
+      <label>
+        Saved purposes
+        <textarea id="savedPurposes" rows="5" placeholder="Enter one purpose per line"></textarea>
+      </label>
+
+      <hr>
+
+      <div class="section-heading compact">
+        <div>
+          <p class="eyebrow">Automatic vendor and STA profile</p>
+          <h3>Saved Facility Profiles</h3>
+        </div>
+      </div>
+
+      <div class="vendor-location-form">
+        <label>
+          Vendor name
+          <input id="vendorLocationName" list="vendorList" placeholder="Example: Repcon">
+        </label>
+        <div class="coordinate-grid">
+          <label>
+            STA task location
+            <input id="vendorTaskLocation" placeholder="Example: Shop area">
+          </label>
+          <label>
+            Safety contact
+            <input id="vendorSafetyContact" placeholder="Contact name">
+          </label>
+          <label>
+            Safety phone
+            <input id="vendorSafetyPhone" inputmode="tel" placeholder="(000) 000-0000">
+          </label>
+        </div>
+        <div class="coordinate-grid">
+          <label>
+            Latitude
+            <input id="vendorLatitude" inputmode="decimal" placeholder="30.000000">
+          </label>
+          <label>
+            Longitude
+            <input id="vendorLongitude" inputmode="decimal" placeholder="-90.000000">
+          </label>
+          <label>
+            Recognition radius, miles
+            <input id="vendorRadius" inputmode="decimal" value="0.5">
+          </label>
+        </div>
+        <div class="form-actions wrap">
+          <button id="useCurrentVendorGpsBtn" class="button button-secondary" type="button">Use Current GPS</button>
+          <button id="saveVendorLocationBtn" class="button button-secondary" type="button">Save Facility Profile</button>
+        </div>
+      </div>
+
+      <div id="vendorLocationsList" class="vendor-locations-list"></div>
+
+      <div class="form-actions wrap settings-actions">
+        <button id="saveSettingsBtn" class="button button-secondary" type="button">Save Settings</button>
+        <button id="resetDataBtn" class="button button-danger-outline" type="button">Delete All App Data</button>
+      </div>
+
+      <p class="privacy-note">
+        Data and GPS coordinates are stored only in this browser on this device. Export a backup periodically because clearing Safari data can remove the log.
+      </p>
+    </section>
+
+    <section class="card help-card">
+      <p class="eyebrow">Shortcut links</p>
+      <h2>Open a specific screen</h2>
+      <p class="muted">After the app is hosted, an iPhone Shortcut can open these URLs:</p>
+      <code id="startLinkExample">https://your-site.example/?action=start</code>
+      <code id="endLinkExample">https://your-site.example/?action=end</code>
+      <code id="logLinkExample">https://your-site.example/?action=log</code>
+      <code id="staLinkExample">https://your-site.example/?action=sta</code>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Main navigation">
+    <button type="button" data-show="startSection">Start</button>
+    <button type="button" data-show="endSection">End</button>
+    <button type="button" data-show="staSection">STA</button>
+    <button type="button" data-show="logSection">Log</button>
+    <button type="button" data-show="settingsSection">Settings</button>
+  </nav>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="./vendor/pdf-lib.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
