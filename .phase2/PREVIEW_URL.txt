@@ -1,0 +1,4 @@
+Development preview path: phase2.html
+Branch: inspection-database-phase-1
+
+This file is informational only. The branch must be served over HTTPS from the same repository origin as index.html so the inspection preview can read the same browser storage as the Mileage Logger.
