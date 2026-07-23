@@ -1,10 +1,10 @@
-const CACHE_NAME = "mileage-logger-inspection-database-v9";
+const CACHE_NAME = "mileage-logger-inspection-database-v10";
 const APP_FILES = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
-  "./inspections.js",
+  "./inspections.js?v=phone-navigation-1",
   "./vendor/pdf-lib.min.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
