@@ -1,4 +1,4 @@
-const CACHE_NAME = "mileage-logger-inspection-database-v8";
+const CACHE_NAME = "mileage-logger-inspection-database-v9";
 const APP_FILES = [
   "./",
   "./index.html",
