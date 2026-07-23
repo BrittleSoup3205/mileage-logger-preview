@@ -1679,7 +1679,18 @@ ${error.message}`);
         : `Trip saved locally: ${formatNumber(miles, true)} miles. Opening required backup…`
     );
 
-    await saveFullBackupToFiles({ automatic: true });
+    const backupConfirmed = await saveFullBackupToFiles({ automatic: true });
+
+    if (window.MileageInspectionDatabase?.promptForTrip) {
+      window.MileageInspectionDatabase.promptForTrip(completedTrip.id, backupConfirmed);
+    } else {
+      window.dispatchEvent(new CustomEvent("mileage:trip-completed", {
+        detail: {
+          tripId: completedTrip.id,
+          backupConfirmed
+        }
+      }));
+    }
   });
 
   $("activeDetails").addEventListener("click", (event) => {

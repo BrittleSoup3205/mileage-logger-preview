@@ -1015,11 +1015,32 @@
     });
 
     window.addEventListener("storage", () => refreshFromState(true));
+    window.addEventListener("mileage:trip-completed", (event) => {
+      promptForCompletedTrip(event.detail?.tripId || "", event.detail?.backupConfirmed);
+    });
+  }
+
+  function promptForCompletedTrip(tripId, backupConfirmed) {
+      refreshFromState(true);
+
+      if (!tripId || !backupConfirmed) return;
+
+      const state = readState();
+      const trip = getTripById(state, tripId);
+      if (!trip) return;
+
+      const createInspection = window.confirm(
+        `Trip saved and backed up.\n\nCreate an inspection record for ${trip.vendor || "this trip"}?`
+      );
+      if (createInspection) showInspectionSection(true, tripId);
   }
 
   function initialize() {
     injectInterface();
     bindEvents();
+    window.MileageInspectionDatabase = {
+      promptForTrip: promptForCompletedTrip
+    };
     refreshFromState(true);
 
     const action = new URLSearchParams(window.location.search).get("action");
