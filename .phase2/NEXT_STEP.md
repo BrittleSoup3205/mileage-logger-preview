@@ -1,1 +1,0 @@
-Next step after preview testing: decode the inspection source into a normal `inspections.js` file, load it from `index.html`, add it to the service-worker cache, and remove the temporary Phase 2A loader/payload files.

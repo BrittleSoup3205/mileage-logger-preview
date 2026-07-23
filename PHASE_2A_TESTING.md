@@ -15,19 +15,26 @@ This development branch adds the first inspection-record system without replacin
 - Compatibility with older backups that do not contain inspection records
 - A separate inspection-backup warning when inspection changes are newer than the last confirmed full backup
 
-## Current preview
+## Current integrated build
 
-Open `phase2.html` on the `inspection-database-phase-1` branch. The preview reads the same local browser storage as the existing Mileage Logger page on the same origin.
+The inspection database is now loaded directly by `index.html` from the normal
+`inspections.js` source file. The temporary compressed payload, loader, and
+separate preview page have been removed.
+
+The working production branch, `main`, is unchanged. Test this integrated build
+from the `inspection-database-phase-1` branch before merging.
 
 ## Test sequence
 
-1. Confirm the existing Start Trip, End Trip, GPS, STA, CSV, backup, and restore functions still operate in `index.html`.
-2. Open `phase2.html`.
+1. Open `index.html` and confirm the Inspections button and Inspect navigation item appear.
+2. Confirm Start Trip, End Trip, GPS, private STA import/generation, mileage CSV, required backup, and restore still operate.
 3. Create one standalone inspection.
 4. Create one inspection linked to a completed mileage trip.
 5. Add two follow-ups, close one from the Open Follow-ups view, and edit the inspection.
 6. Export the inspection CSV.
-7. Return to `index.html`, save a full JSON backup, restore it, and verify the inspection records and follow-ups return.
+7. Save a full JSON backup, restore it, and verify the inspection records and follow-ups return.
 8. Restore an older mileage-only backup and verify the inspection database opens empty without an error.
+9. Reload while offline and confirm the inspection interface still opens.
 
 Do not merge the inspection interface into `main` until this sequence has been completed on the intended iPhone/iPad and desktop browsers.
+
