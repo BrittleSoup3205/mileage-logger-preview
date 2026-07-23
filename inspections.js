@@ -273,6 +273,11 @@
       .inspection-backup-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; padding: 12px; border: 1px solid var(--warning); border-radius: 12px; color: var(--warning); background: color-mix(in srgb, var(--warning), transparent 94%); }
       .inspection-backup-notice.current { color: var(--success); border-color: var(--success); background: color-mix(in srgb, var(--success), transparent 94%); }
       .inspection-form-panel { margin: 13px 0 16px; padding: 14px; border: 2px solid var(--info); border-radius: 14px; background: color-mix(in srgb, var(--info), transparent 96%); }
+      .inspection-form-open #inspectionDashboard,
+      .inspection-form-open #inspectionBackupNotice,
+      .inspection-form-open .inspection-toolbar,
+      .inspection-form-open .log-toolbar,
+      .inspection-form-open #inspectionList { display: none; }
       .inspection-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }
       .inspection-form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .inspection-form-grid .full { grid-column: 1 / -1; }
@@ -569,16 +574,18 @@
       </form>
     `;
     panel.classList.remove("hidden");
+    $("inspectionSection")?.classList.add("inspection-form-open");
     populateProjectDatalist(state);
     renderFollowUpEditors(Array.isArray(values.followUps) ? values.followUps : []);
     renderSelectedTripSummary(snapshot);
-    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    panel.scrollIntoView({ behavior: "auto", block: "start" });
   }
 
   function closeInspectionForm() {
     editingInspectionId = null;
     currentTripId = "";
     const panel = $("inspectionFormPanel");
+    $("inspectionSection")?.classList.remove("inspection-form-open");
     if (panel) {
       panel.classList.add("hidden");
       panel.innerHTML = "";
