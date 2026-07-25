@@ -61,7 +61,8 @@
       </div>
 
       <p class="privacy-note compact-note">
-        After every completed trip, the app opens the iPhone share sheet with a complete restore file.
+        After every completed trip, the app opens the iPhone share sheet with a complete ZIP restore file.
+        Edits and inspection-photo changes also require a new ZIP backup.
         Choose <strong>Save to Files</strong>, select an iCloud Drive folder, tap <strong>Save</strong>, then confirm the save in the app.
         A new trip is blocked until the prior completed trip has a confirmed backup.
       </p>
@@ -289,6 +290,37 @@
         <button id="clearSearch" class="button button-secondary button-small" type="button">Clear Search</button>
       </div>
 
+      <div id="tripEditPanel" class="trip-edit-panel hidden">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">Correct a saved entry</p>
+            <h3>Edit Trip</h3>
+          </div>
+          <button id="closeTripEditBtn" class="button button-quiet button-small" type="button">Close</button>
+        </div>
+        <form id="tripEditForm" autocomplete="off">
+          <input id="tripEditId" type="hidden">
+          <div class="inspection-form-grid">
+            <label>Date<input id="tripEditDate" required placeholder="MM/DD/YYYY"></label>
+            <label>Project number<input id="tripEditProject" placeholder="Example: E10379-424"></label>
+            <label>Start time<input id="tripEditStartTime" required placeholder="7:30 AM"></label>
+            <label>End time<input id="tripEditEndTime" required placeholder="3:45 PM"></label>
+            <label>Start odometer<input id="tripEditStartOdo" inputmode="decimal" required></label>
+            <label>End odometer<input id="tripEditEndOdo" inputmode="decimal" required></label>
+            <label>Customer<input id="tripEditCustomer" list="customerList" required></label>
+            <label>Vendor / destination<input id="tripEditVendor" list="vendorList" required></label>
+            <label class="full">Purpose<input id="tripEditPurpose" list="purposeList" required></label>
+          </div>
+          <label>Notes<textarea id="tripEditNotes" rows="4"></textarea></label>
+          <div id="tripEditMileagePreview" class="miles-preview"></div>
+          <p class="privacy-note compact-note">GPS locations and route points are kept exactly as originally recorded.</p>
+          <div class="form-actions wrap">
+            <button class="button button-primary" type="submit">Save Trip Changes</button>
+            <button id="cancelTripEditBtn" class="button button-secondary" type="button">Cancel</button>
+          </div>
+        </form>
+      </div>
+
       <div id="emptyLog" class="empty-state hidden">No completed trips have been saved yet.</div>
 
       <div class="table-wrap">
@@ -321,7 +353,7 @@
         <button id="exportBtn2" class="button button-secondary" type="button">Export CSV</button>
         <button id="backupBtn" class="button button-secondary" type="button">Save Full Backup</button>
         <button id="importBtn" class="button button-secondary" type="button">Restore Backup</button>
-        <input id="importFile" class="hidden" type="file" accept="application/json,.json">
+        <input id="importFile" class="hidden" type="file" accept="application/json,.json,application/zip,.zip">
       </div>
     </section>
 
@@ -334,7 +366,8 @@
       </div>
 
       <div class="required-backup-note">
-        <strong>Backup rule:</strong> A full JSON restore file is required after every completed trip.
+        <strong>Backup rule:</strong> A full ZIP restore file is required after every completed trip or record change.
+        The ZIP includes inspection photos. Older JSON backups can still be restored.
         This rule cannot be turned off in this build because the mileage record is the primary purpose of the app.
       </div>
 
@@ -457,8 +490,10 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="./vendor/pdf-lib.min.js"></script>
-  <script src="./app.js?v=inspection-handoff-1"></script>
-  <script src="./inspections.js?v=trip-prompt-2"></script>
+  <script src="./vendor/fflate.min.js"></script>
+  <script src="./media-store.js?v=photo-backup-1"></script>
+  <script src="./app.js?v=photo-trip-edit-1"></script>
+  <script src="./inspections.js?v=inspection-photos-1"></script>
 </body>
 </html>
 

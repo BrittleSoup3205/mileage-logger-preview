@@ -2,13 +2,18 @@
   "use strict";
 
   const STATE_KEY = "mileage_logger_state_v3";
-  const INSPECTION_SCHEMA_VERSION = 1;
+  const INSPECTION_SCHEMA_VERSION = 2;
   const REFRESH_INTERVAL_MS = 1200;
   const nativeSetItem = window.localStorage.setItem.bind(window.localStorage);
   const $ = (id) => document.getElementById(id);
 
   let editingInspectionId = null;
+  let editingInspectionWasExisting = false;
   let currentTripId = "";
+  let currentPhotos = [];
+  let originalPhotoIds = new Set();
+  let photoObjectUrls = [];
+  let inspectionListObjectUrls = [];
   let activeView = "inspections";
   let lastStateSignature = "";
 
@@ -107,6 +112,9 @@
     const state = readState();
     mutator(state);
     state.settings.inspectionLastChangedISO = nowISO();
+    state.backup = state.backup && typeof state.backup === "object" ? state.backup : {};
+    state.backup.pendingChangeCount = Math.max(0, Number(state.backup.pendingChangeCount || 0)) + 1;
+    state.backup.lastRequiredISO = state.settings.inspectionLastChangedISO;
     writeState(state);
   }
 
@@ -288,6 +296,18 @@
       .inspection-meta { display: flex; flex-wrap: wrap; gap: 7px 12px; margin: 9px 0; color: var(--muted); font-size: .88rem; }
       .inspection-summary { margin: 10px 0; line-height: 1.45; white-space: pre-wrap; }
       .inspection-record-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+      .inspection-photo-list { display: grid; gap: 11px; margin: 11px 0 16px; }
+      .inspection-photo-card { display: grid; grid-template-columns: minmax(110px, 160px) 1fr; gap: 11px; padding: 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+      .inspection-photo-preview, .inspection-photo-thumbnails button { padding: 0; overflow: hidden; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--card), var(--bg) 40%); cursor: pointer; }
+      .inspection-photo-preview { min-height: 120px; }
+      .inspection-photo-preview img, .inspection-photo-thumbnails img { display: block; width: 100%; height: 100%; object-fit: cover; }
+      .inspection-photo-loading { display: grid; min-height: 120px; place-items: center; padding: 8px; color: var(--muted); }
+      .inspection-photo-details { display: grid; align-content: start; gap: 7px; }
+      .inspection-photo-details small { color: var(--muted); }
+      .inspection-photo-thumbnails { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+      .inspection-photo-thumbnails button { width: 78px; height: 78px; }
+      .inspection-photo-thumbnails button span { display: grid; height: 100%; place-items: center; color: var(--muted); }
+      .inspection-photo-more { display: grid; min-width: 78px; min-height: 78px; place-items: center; color: var(--muted); font-weight: 700; }
       .inspection-followups { display: grid; gap: 8px; margin-top: 10px; }
       .inspection-followup { padding: 10px; border-left: 4px solid var(--warning); border-radius: 9px; background: color-mix(in srgb, var(--warning), transparent 95%); }
       .inspection-followup.closed { border-left-color: var(--success); background: color-mix(in srgb, var(--success), transparent 95%); }
@@ -304,6 +324,8 @@
         .inspection-dashboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .inspection-form-grid, .inspection-form-grid.two { grid-template-columns: 1fr; }
         .followup-editor-grid { grid-template-columns: 1fr; }
+        .inspection-photo-card { grid-template-columns: 1fr; }
+        .inspection-photo-preview { min-height: 180px; }
         .inspection-record-heading, .inspection-backup-notice { flex-direction: column; }
       }
     `;
@@ -465,7 +487,7 @@
     notice.classList.toggle("current", current);
     notice.innerHTML = current
       ? `<div><strong>Inspection backup is current.</strong><br><small>The latest inspection changes are included in a confirmed full backup.</small></div>`
-      : `<div><strong>Inspection changes need a full backup.</strong><br><small>Save the app's JSON restore file so the inspection database is protected.</small></div>
+      : `<div><strong>Inspection changes need a full backup.</strong><br><small>Save the app's ZIP restore file so the inspection database and photos are protected.</small></div>
          <button id="backupInspectionChangesBtn" class="button button-backup button-small" type="button">Back Up Changes</button>`;
   }
 
@@ -497,9 +519,96 @@
     `).join("");
   }
 
+  function collectPhotoMetadata() {
+    const captions = new Map(
+      [...document.querySelectorAll("#inspectionPhotoList [data-photo-caption]")].map((input) => [
+        input.dataset.photoCaption,
+        input.value.trim()
+      ])
+    );
+    return currentPhotos.map((photo) => ({
+      ...photo,
+      caption: captions.get(photo.id) ?? photo.caption ?? ""
+    }));
+  }
+
+  async function renderPhotoEditors() {
+    const list = $("inspectionPhotoList");
+    const count = $("inspectionPhotoCount");
+    if (!list || !count) return;
+    photoObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+    photoObjectUrls = [];
+    count.textContent = String(currentPhotos.length);
+
+    if (!currentPhotos.length) {
+      list.innerHTML = `<div class="inspection-empty compact">No photos attached.</div>`;
+      return;
+    }
+
+    list.innerHTML = currentPhotos.map((photo) => `
+      <article class="inspection-photo-card">
+        <button class="inspection-photo-preview" type="button" data-view-photo="${escapeHTML(photo.id)}" aria-label="Open photo">
+          <span class="inspection-photo-loading">Loading photo…</span>
+        </button>
+        <div class="inspection-photo-details">
+          <strong>${escapeHTML(photo.name || "Inspection photo")}</strong>
+          <small>${Number(photo.size || 0) > 0 ? `${Math.max(1, Math.round(Number(photo.size) / 1024))} KB` : ""}</small>
+          <label>Caption<input data-photo-caption="${escapeHTML(photo.id)}" value="${escapeHTML(photo.caption || "")}" placeholder="What does this photo show?"></label>
+          <button class="button button-danger-outline button-small" type="button" data-remove-photo="${escapeHTML(photo.id)}">Remove Photo</button>
+        </div>
+      </article>
+    `).join("");
+
+    if (!window.MileageMediaStore) return;
+    await Promise.all(currentPhotos.map(async (photo) => {
+      try {
+        const stored = await window.MileageMediaStore.getPhoto(photo.id);
+        const target = list.querySelector(`[data-view-photo="${CSS.escape(photo.id)}"]`);
+        if (!stored?.blob || !target) return;
+        const url = URL.createObjectURL(stored.blob);
+        photoObjectUrls.push(url);
+        target.dataset.photoUrl = url;
+        target.innerHTML = `<img src="${url}" alt="${escapeHTML(photo.caption || photo.name || "Inspection photo")}">`;
+      } catch (error) {
+        console.warn("Could not load inspection photo:", error);
+      }
+    }));
+  }
+
+  async function addInspectionPhotos(files) {
+    const status = $("inspectionPhotoStatus");
+    if (!editingInspectionId || !window.MileageMediaStore) {
+      window.alert("Private photo storage is unavailable.");
+      return;
+    }
+
+    const images = [...(files || [])].filter((file) => String(file.type || "").startsWith("image/"));
+    if (!images.length) return;
+    status.textContent = `Preparing ${images.length} photo${images.length === 1 ? "" : "s"}…`;
+    status.className = "gps-status";
+
+    try {
+      for (let index = 0; index < images.length; index += 1) {
+        status.textContent = `Preparing photo ${index + 1} of ${images.length}…`;
+        const metadata = await window.MileageMediaStore.addPhoto(editingInspectionId, images[index]);
+        currentPhotos.push(metadata);
+      }
+      status.textContent = `${images.length} photo${images.length === 1 ? "" : "s"} added. Save the inspection to keep the attachment.`;
+      status.className = "gps-status good";
+      await renderPhotoEditors();
+    } catch (error) {
+      status.textContent = `A photo could not be added: ${error.message}`;
+      status.className = "gps-status bad";
+      window.alert(`The photo could not be added.\n\n${error.message}`);
+    }
+  }
+
   function openInspectionForm(inspection = null, tripId = "") {
     const state = readState();
-    editingInspectionId = inspection?.id || null;
+    editingInspectionWasExisting = Boolean(inspection);
+    editingInspectionId = inspection?.id || makeId();
+    currentPhotos = Array.isArray(inspection?.photos) ? inspection.photos.map((photo) => ({ ...photo })) : [];
+    originalPhotoIds = new Set(currentPhotos.map((photo) => photo.id));
     currentTripId = tripId || inspection?.tripId || "";
     const trip = getTripById(state, currentTripId);
     const snapshot = inspection?.tripSnapshot || tripSnapshot(trip);
@@ -518,8 +627,8 @@
     panel.innerHTML = `
       <div class="section-heading compact">
         <div>
-          <p class="eyebrow">${editingInspectionId ? "Edit record" : "New record"}</p>
-          <h3>${editingInspectionId ? "Update Inspection" : "Create Inspection"}</h3>
+          <p class="eyebrow">${editingInspectionWasExisting ? "Edit record" : "New record"}</p>
+          <h3>${editingInspectionWasExisting ? "Update Inspection" : "Create Inspection"}</h3>
         </div>
         <button id="closeInspectionFormBtn" class="button button-quiet button-small" type="button">Close Form</button>
       </div>
@@ -562,13 +671,30 @@
         <label>Deficiencies / exceptions<textarea id="inspectionDeficiencies" rows="3" placeholder="Leave blank when none were identified">${escapeHTML(values.deficiencies || "")}</textarea></label>
 
         <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">Stored privately on this device</p>
+            <h3>Inspection Photos</h3>
+          </div>
+          <span id="inspectionPhotoCount" class="pill">0</span>
+        </div>
+        <p class="muted">Photos are reduced to a practical size and included in the required ZIP backup.</p>
+        <div class="form-actions wrap">
+          <button id="takeInspectionPhotoBtn" class="button inspection-button button-small" type="button">Take Photo</button>
+          <button id="chooseInspectionPhotosBtn" class="button button-secondary button-small" type="button">Choose Photos</button>
+          <input id="takeInspectionPhotoInput" class="hidden" type="file" accept="image/*" capture="environment">
+          <input id="chooseInspectionPhotosInput" class="hidden" type="file" accept="image/*" multiple>
+        </div>
+        <div id="inspectionPhotoStatus" class="gps-status">Ready to add photos.</div>
+        <div id="inspectionPhotoList" class="inspection-photo-list"></div>
+
+        <div class="section-heading compact">
           <div><p class="eyebrow">Action tracking</p><h3>Follow-ups</h3></div>
           <button id="addFollowUpBtn" class="button button-secondary button-small" type="button">Add Follow-up</button>
         </div>
         <div id="followUpEditorList" class="followup-editor-list"></div>
 
         <div class="form-actions wrap">
-          <button class="button inspection-button" type="submit">${editingInspectionId ? "Save Changes" : "Save Inspection"}</button>
+          <button class="button inspection-button" type="submit">${editingInspectionWasExisting ? "Save Changes" : "Save Inspection"}</button>
           <button id="cancelInspectionFormBtn" class="button button-secondary" type="button">Cancel</button>
         </div>
       </form>
@@ -577,13 +703,34 @@
     $("inspectionSection")?.classList.add("inspection-form-open");
     populateProjectDatalist(state);
     renderFollowUpEditors(Array.isArray(values.followUps) ? values.followUps : []);
+    renderPhotoEditors();
     renderSelectedTripSummary(snapshot);
     panel.scrollIntoView({ behavior: "auto", block: "start" });
   }
 
-  function closeInspectionForm() {
+  function closeInspectionForm(options = {}) {
+    const saved = Boolean(options.saved);
+    const abandonedInspectionId = !editingInspectionWasExisting && !saved ? editingInspectionId : "";
+    const unsavedAddedPhotoIds = editingInspectionWasExisting && !saved
+      ? currentPhotos.filter((photo) => !originalPhotoIds.has(photo.id)).map((photo) => photo.id)
+      : [];
+    photoObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+    photoObjectUrls = [];
+    if (abandonedInspectionId && window.MileageMediaStore) {
+      window.MileageMediaStore.deleteInspectionPhotos(abandonedInspectionId).catch((error) => {
+        console.warn("Could not remove abandoned inspection photos:", error);
+      });
+    }
+    unsavedAddedPhotoIds.forEach((photoId) => {
+      window.MileageMediaStore?.deletePhoto(photoId).catch((error) => {
+        console.warn("Could not remove an unsaved photo:", error);
+      });
+    });
     editingInspectionId = null;
+    editingInspectionWasExisting = false;
     currentTripId = "";
+    currentPhotos = [];
+    originalPhotoIds = new Set();
     const panel = $("inspectionFormPanel");
     $("inspectionSection")?.classList.remove("inspection-form-open");
     if (panel) {
@@ -651,11 +798,11 @@
   }
 
   function saveInspectionFromForm() {
-    const wasEditing = Boolean(editingInspectionId);
+    const wasEditing = editingInspectionWasExisting;
     const state = readState();
     const selectedTripId = $("inspectionTripId").value;
     const trip = getTripById(state, selectedTripId);
-    const existing = editingInspectionId
+    const existing = editingInspectionWasExisting
       ? state.settings.inspections.find((inspection) => inspection.id === editingInspectionId)
       : null;
     const createdISO = existing?.createdISO || nowISO();
@@ -682,6 +829,7 @@
       observations: $("inspectionObservations").value.trim(),
       deficiencies: $("inspectionDeficiencies").value.trim(),
       followUps: collectFollowUps(),
+      photos: collectPhotoMetadata(),
       createdISO,
       modifiedISO: nowISO()
     };
@@ -703,7 +851,7 @@
       if (!nextState.settings.vendors.includes(inspection.vendor)) nextState.settings.vendors.push(inspection.vendor);
     });
 
-    closeInspectionForm();
+    closeInspectionForm({ saved: true });
     showInspectionToast(wasEditing ? "Inspection updated." : "Inspection saved.");
   }
 
@@ -729,6 +877,7 @@
       const followUps = Array.isArray(inspection.followUps) ? inspection.followUps : [];
       const openCount = followUps.filter((item) => item.status !== "Closed").length;
       const snapshot = inspection.tripSnapshot;
+      const photos = Array.isArray(inspection.photos) ? inspection.photos : [];
       const statusClass = ["Complete", "Released"].includes(inspection.status)
         ? "inspection-pill-complete"
         : "inspection-pill-open";
@@ -749,10 +898,16 @@
             <span><strong>Hours:</strong> ${escapeHTML(inspection.hoursOnSite || "—")}</span>
             <span><strong>Mileage:</strong> ${snapshot ? formatMiles(snapshot.miles) : "Standalone"}</span>
             <span><strong>Open actions:</strong> ${openCount}</span>
+            <span><strong>Photos:</strong> ${photos.length}</span>
           </div>
 
           ${inspection.summary ? `<div class="inspection-summary"><strong>Summary</strong><br>${escapeHTML(inspection.summary)}</div>` : ""}
           ${inspection.deficiencies ? `<div class="inspection-summary"><strong>Deficiencies / exceptions</strong><br>${escapeHTML(inspection.deficiencies)}</div>` : ""}
+          ${photos.length ? `<div class="inspection-photo-thumbnails">${photos.slice(0, 4).map((photo) => `
+            <button type="button" data-view-photo="${escapeHTML(photo.id)}" aria-label="Open ${escapeHTML(photo.caption || photo.name || "inspection photo")}">
+              <span>Photo</span>
+            </button>
+          `).join("")}${photos.length > 4 ? `<span class="inspection-photo-more">+${photos.length - 4} more</span>` : ""}</div>` : ""}
 
           ${followUps.length ? `<div class="inspection-followups">${followUps.map((item) => `
             <div class="inspection-followup ${item.status === "Closed" ? "closed" : ""}">
@@ -770,6 +925,26 @@
         </article>
       `;
     }).join("");
+    hydrateInspectionListPhotos();
+  }
+
+  async function hydrateInspectionListPhotos() {
+    inspectionListObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+    inspectionListObjectUrls = [];
+    if (!window.MileageMediaStore) return;
+    const buttons = [...document.querySelectorAll("#inspectionList [data-view-photo]")];
+    await Promise.all(buttons.map(async (button) => {
+      try {
+        const stored = await window.MileageMediaStore.getPhoto(button.dataset.viewPhoto);
+        if (!stored?.blob || !button.isConnected) return;
+        const url = URL.createObjectURL(stored.blob);
+        inspectionListObjectUrls.push(url);
+        button.dataset.photoUrl = url;
+        button.innerHTML = `<img src="${url}" alt="">`;
+      } catch (error) {
+        console.warn("Could not load inspection thumbnail:", error);
+      }
+    }));
   }
 
   function renderOpenFollowUps(inspections, container) {
@@ -879,7 +1054,7 @@
       trips: state.trips.map((trip) => [trip.id, trip.endISO, trip.miles]),
       inspections: state.settings.inspections.map((inspection) => [inspection.id, inspection.modifiedISO]),
       ignored: state.settings.inspectionIgnoredTripIds,
-      backup: [state.backup?.pendingTripCount, state.backup?.lastConfirmedISO]
+      backup: [state.backup?.pendingTripCount, state.backup?.pendingChangeCount, state.backup?.lastConfirmedISO]
     });
     if (!force && signature === lastStateSignature) return;
     lastStateSignature = signature;
@@ -902,7 +1077,7 @@
       renderInspectionList(readState());
     });
 
-    document.addEventListener("click", (event) => {
+    document.addEventListener("click", async (event) => {
       const createTripButton = event.target.closest("[data-create-inspection-trip]");
       if (createTripButton) {
         showInspectionSection(true, createTripButton.dataset.createInspectionTrip);
@@ -946,6 +1121,50 @@
         return;
       }
 
+      if (event.target.closest("#takeInspectionPhotoBtn")) {
+        $("takeInspectionPhotoInput")?.click();
+        return;
+      }
+
+      if (event.target.closest("#chooseInspectionPhotosBtn")) {
+        $("chooseInspectionPhotosInput")?.click();
+        return;
+      }
+
+      const viewPhotoButton = event.target.closest("[data-view-photo]");
+      if (viewPhotoButton) {
+        const url = viewPhotoButton.dataset.photoUrl;
+        if (url) window.open(url, "_blank", "noopener");
+        else window.alert("The photo is still loading or is not available on this device.");
+        return;
+      }
+
+      const removePhotoButton = event.target.closest("[data-remove-photo]");
+      if (removePhotoButton) {
+        const photoId = removePhotoButton.dataset.removePhoto;
+        if (!window.confirm("Remove this photo from the inspection?")) return;
+        currentPhotos = collectPhotoMetadata().filter((photo) => photo.id !== photoId);
+        try {
+          await window.MileageMediaStore?.deletePhoto(photoId);
+          if (editingInspectionWasExisting && originalPhotoIds.has(photoId)) {
+            originalPhotoIds.delete(photoId);
+            updateState((state) => {
+              const inspection = state.settings.inspections.find((item) => item.id === editingInspectionId);
+              if (inspection) {
+                inspection.photos = (inspection.photos || []).filter((photo) => photo.id !== photoId);
+                inspection.modifiedISO = nowISO();
+              }
+            });
+          }
+          await renderPhotoEditors();
+          $("inspectionPhotoStatus").textContent = "Photo removed. Save the inspection to keep this change.";
+          $("inspectionPhotoStatus").className = "gps-status warn";
+        } catch (error) {
+          window.alert(`The photo could not be removed.\n\n${error.message}`);
+        }
+        return;
+      }
+
       const removeFollowUp = event.target.closest(".remove-followup-btn");
       if (removeFollowUp) {
         removeFollowUp.closest(".followup-editor")?.remove();
@@ -971,6 +1190,9 @@
         if (!window.confirm(`Delete the ${displayDate(inspection.date)} inspection at ${inspection.vendor}? This cannot be undone.`)) return;
         updateState((nextState) => {
           nextState.settings.inspections = nextState.settings.inspections.filter((item) => item.id !== inspection.id);
+        });
+        window.MileageMediaStore?.deleteInspectionPhotos(inspection.id).catch((error) => {
+          console.warn("Could not remove inspection photos:", error);
         });
         closeInspectionForm();
         showInspectionToast("Inspection deleted.");
@@ -999,6 +1221,10 @@
     });
 
     document.addEventListener("change", (event) => {
+      if (event.target.id === "takeInspectionPhotoInput" || event.target.id === "chooseInspectionPhotosInput") {
+        addInspectionPhotos(event.target.files);
+        event.target.value = "";
+      }
       if (event.target.id === "inspectionTripId") {
         applyTripToOpenForm(event.target.value);
       }

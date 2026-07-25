@@ -37,6 +37,7 @@
 
   const DEFAULT_BACKUP_STATE = {
     pendingTripCount: 0,
+    pendingChangeCount: 0,
     lastConfirmedISO: null,
     lastConfirmedTripCount: 0,
     lastFilename: "",
@@ -186,11 +187,12 @@
     }
     state.backup = { ...DEFAULT_BACKUP_STATE, ...state.backup };
     state.backup.pendingTripCount = Math.max(0, Number(state.backup.pendingTripCount || 0));
+    state.backup.pendingChangeCount = Math.max(0, Number(state.backup.pendingChangeCount || 0));
   }
 
   function backupIsRequired() {
     ensureBackupState();
-    return state.backup.pendingTripCount > 0;
+    return state.backup.pendingTripCount > 0 || state.backup.pendingChangeCount > 0;
   }
 
   function formatBackupDate(iso) {
@@ -213,11 +215,18 @@
     if (!pill || !text) return;
 
     if (backupIsRequired()) {
+      const pendingParts = [];
+      if (state.backup.pendingTripCount > 0) {
+        pendingParts.push(`${state.backup.pendingTripCount} completed trip${state.backup.pendingTripCount === 1 ? "" : "s"}`);
+      }
+      if (state.backup.pendingChangeCount > 0) {
+        pendingParts.push(`${state.backup.pendingChangeCount} saved record change${state.backup.pendingChangeCount === 1 ? "" : "s"}`);
+      }
       pill.textContent = "BACKUP REQUIRED";
       pill.className = "pill backup-required";
       text.innerHTML = `
-        <strong>${state.backup.pendingTripCount} completed trip${state.backup.pendingTripCount === 1 ? "" : "s"} not yet confirmed as saved outside the app.</strong><br>
-        Save the full backup to Files or iCloud Drive before starting another trip.
+        <strong>${escapeHTML(pendingParts.join(" and "))} not yet confirmed as saved outside the app.</strong><br>
+        Save the full ZIP backup to Files or iCloud Drive before starting another trip.
       `;
       $("backupCard")?.classList.add("backup-card-required");
       return;
@@ -238,7 +247,7 @@
     renderBackupStatus();
     $("backupCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
     window.alert(
-      "A completed trip still needs a confirmed backup. Tap Save Full Backup to Files, save it to iCloud Drive or Files, and confirm the save before starting another trip."
+      "Mileage Logger has changes that still need a confirmed backup. Tap Save Full Backup to Files, save the ZIP to iCloud Drive or Files, and confirm the save before starting another trip."
     );
     return false;
   }
@@ -766,13 +775,171 @@
           </div>
         </td>
         <td>${escapeHTML(trip.notes || "")}</td>
-        <td><button class="button button-danger-outline button-small" type="button" data-delete-trip="${escapeHTML(trip.id)}">Delete</button></td>
+        <td>
+          <div class="trip-row-actions">
+            <button class="button button-secondary button-small" type="button" data-edit-trip="${escapeHTML(trip.id)}">Edit</button>
+            <button class="button button-danger-outline button-small" type="button" data-delete-trip="${escapeHTML(trip.id)}">Delete</button>
+          </div>
+        </td>
       `;
       tbody.appendChild(row);
     });
 
     $("emptyLog").classList.toggle("hidden", filtered.length !== 0);
     $("tripTable").classList.toggle("hidden", filtered.length === 0);
+  }
+
+  function tripDateToInspectionDate(value) {
+    const match = String(value || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return match ? `${match[3]}-${match[1]}-${match[2]}` : String(value || "");
+  }
+
+  function parseTimeMinutes(value) {
+    const text = String(value || "").trim();
+    const twelveHour = text.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!twelveHour) return null;
+    let hour = Number(twelveHour[1]);
+    const minute = Number(twelveHour[2]);
+    if (hour < 1 || hour > 12 || minute > 59) return null;
+    if (hour === 12) hour = 0;
+    if (twelveHour[3].toUpperCase() === "PM") hour += 12;
+    return hour * 60 + minute;
+  }
+
+  function calculateHoursBetween(start, end) {
+    const startMinutes = parseTimeMinutes(start);
+    const endMinutes = parseTimeMinutes(end);
+    if (startMinutes === null || endMinutes === null) return "";
+    let difference = endMinutes - startMinutes;
+    if (difference < 0) difference += 24 * 60;
+    return (difference / 60).toFixed(2);
+  }
+
+  function makeTripSnapshot(trip) {
+    return {
+      tripId: trip.id,
+      date: trip.date || "",
+      startTime: trip.startTime || "",
+      endTime: trip.endTime || "",
+      startOdometer: trip.startOdometer ?? "",
+      endOdometer: trip.endOdometer ?? "",
+      miles: Number(trip.miles || 0),
+      gpsRouteMiles: Number(trip.gpsRouteMiles || 0),
+      startLocation: trip.startLocation || null,
+      endLocation: trip.endLocation || null,
+      staGenerated: Boolean(trip.staGenerated),
+      staFileName: trip.staFileName || ""
+    };
+  }
+
+  function openTripEditor(tripId) {
+    const trip = state.trips.find((item) => item.id === tripId);
+    if (!trip) return;
+    $("tripEditId").value = trip.id;
+    $("tripEditDate").value = trip.date || "";
+    $("tripEditProject").value = trip.projectNumber || "";
+    $("tripEditStartTime").value = trip.startTime || "";
+    $("tripEditEndTime").value = trip.endTime || "";
+    $("tripEditStartOdo").value = formatNumber(trip.startOdometer, true);
+    $("tripEditEndOdo").value = formatNumber(trip.endOdometer, true);
+    $("tripEditCustomer").value = trip.customer || "";
+    $("tripEditVendor").value = trip.vendor || "";
+    $("tripEditPurpose").value = trip.purpose || "";
+    $("tripEditNotes").value = trip.notes || "";
+    $("tripEditPanel").classList.remove("hidden");
+    updateTripEditPreview();
+    $("tripEditPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function closeTripEditor() {
+    $("tripEditPanel").classList.add("hidden");
+    $("tripEditForm").reset();
+  }
+
+  function updateTripEditPreview() {
+    const start = parseOdometer($("tripEditStartOdo").value);
+    const end = parseOdometer($("tripEditEndOdo").value);
+    const preview = $("tripEditMileagePreview");
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      preview.textContent = "Enter both odometer readings to calculate the corrected mileage.";
+      preview.style.color = "var(--muted)";
+      return;
+    }
+    const miles = end - start;
+    preview.textContent = miles < 0
+      ? "Ending odometer cannot be lower than starting odometer."
+      : `Corrected mileage: ${formatNumber(miles, true)} miles`;
+    preview.style.color = miles < 0 ? "var(--danger)" : "var(--success)";
+  }
+
+  function saveTripEdits() {
+    const tripId = $("tripEditId").value;
+    const trip = state.trips.find((item) => item.id === tripId);
+    if (!trip) {
+      window.alert("The trip could not be found.");
+      return;
+    }
+
+    const startOdometer = parseOdometer($("tripEditStartOdo").value);
+    const endOdometer = parseOdometer($("tripEditEndOdo").value);
+    if (!Number.isFinite(startOdometer) || !Number.isFinite(endOdometer) || startOdometer < 0 || endOdometer < startOdometer) {
+      window.alert("Enter valid odometer readings. The ending odometer cannot be lower than the starting odometer.");
+      return;
+    }
+
+    const date = $("tripEditDate").value.trim();
+    const startTime = $("tripEditStartTime").value.trim();
+    const endTime = $("tripEditEndTime").value.trim();
+    const customer = $("tripEditCustomer").value.trim();
+    const vendor = $("tripEditVendor").value.trim();
+    const purpose = $("tripEditPurpose").value.trim();
+    if (!date || !startTime || !endTime || !customer || !vendor || !purpose) {
+      window.alert("Date, times, customer, vendor, and purpose are required.");
+      return;
+    }
+
+    Object.assign(trip, {
+      date,
+      projectNumber: $("tripEditProject").value.trim(),
+      startTime,
+      endTime,
+      startOdometer,
+      endOdometer,
+      miles: endOdometer - startOdometer,
+      customer,
+      vendor,
+      purpose,
+      notes: $("tripEditNotes").value.trim(),
+      modifiedISO: new Date().toISOString()
+    });
+
+    const inspections = Array.isArray(state.settings?.inspections) ? state.settings.inspections : [];
+    inspections.forEach((inspection) => {
+      if (inspection.tripId !== trip.id) return;
+      inspection.tripSnapshot = makeTripSnapshot(trip);
+      inspection.date = tripDateToInspectionDate(trip.date);
+      inspection.customer = trip.customer;
+      inspection.vendor = trip.vendor;
+      inspection.projectNumber = trip.projectNumber || "";
+      inspection.activity = trip.purpose;
+      inspection.startTime = trip.startTime;
+      inspection.endTime = trip.endTime;
+      inspection.hoursOnSite = calculateHoursBetween(trip.startTime, trip.endTime);
+      inspection.modifiedISO = new Date().toISOString();
+    });
+
+    if (state.trips.length) {
+      state.lastOdometer = state.trips
+        .slice()
+        .sort((a, b) => String(b.endISO || "").localeCompare(String(a.endISO || "")))[0].endOdometer;
+    }
+    ensureBackupState();
+    state.backup.pendingChangeCount += 1;
+    state.backup.lastRequiredISO = new Date().toISOString();
+    saveState();
+    closeTripEditor();
+    renderAll();
+    showToast("Trip updated. Save a new full backup before starting another trip.");
   }
 
   function csvEscape(value) {
@@ -880,31 +1047,59 @@
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
   }
 
-  function buildBackupPackage() {
+  function buildBackupPackage(photoManifest = []) {
     ensureBackupState();
     return {
       backupFormat: "MileageLoggerFullBackup",
-      backupVersion: 2,
+      backupVersion: 3,
       createdISO: new Date().toISOString(),
       tripCount: state.trips.length,
-      note: "This full restore file excludes the privately imported STA master. Keep the original STA master PDF separately in Files.",
+      photoCount: photoManifest.length,
+      photoManifest,
+      note: "This ZIP includes mileage data, inspection records, and inspection photos. It excludes the privately imported STA master. Keep the original STA master PDF separately in Files.",
       appState: state
     };
   }
 
-  function createBackupFile() {
-    const filename = `Mileage_Logger_Full_Backup_${backupTimestamp()}_${state.trips.length}_trips.json`;
-    const content = JSON.stringify(buildBackupPackage(), null, 2);
+  async function createBackupFile() {
+    if (!window.fflate) throw new Error("The ZIP backup component is unavailable.");
+    if (!window.MileageMediaStore) throw new Error("Private photo storage is unavailable.");
+
+    const photos = await window.MileageMediaStore.getAllPhotos();
+    const photoManifest = photos.map((photo) => ({
+      id: photo.id,
+      inspectionId: photo.inspectionId,
+      name: photo.name,
+      type: photo.type,
+      size: photo.size,
+      width: photo.width,
+      height: photo.height,
+      createdISO: photo.createdISO,
+      caption: photo.caption || "",
+      path: `photos/${photo.id}.bin`
+    }));
+    const entries = {
+      "app-data.json": window.fflate.strToU8(JSON.stringify(buildBackupPackage(photoManifest), null, 2))
+    };
+
+    for (const photo of photos) {
+      entries[`photos/${photo.id}.bin`] = new Uint8Array(await photo.blob.arrayBuffer());
+    }
+
+    const bytes = window.fflate.zipSync(entries, { level: 6 });
+    const filename = `Mileage_Logger_Full_Backup_${backupTimestamp()}_${state.trips.length}_trips.zip`;
+    const blob = new Blob([bytes], { type: "application/zip" });
     return {
       filename,
-      content,
-      file: new File([content], filename, { type: "application/json" })
+      blob,
+      file: new File([blob], filename, { type: "application/zip" })
     };
   }
 
   function markBackupConfirmed(filename) {
     ensureBackupState();
     state.backup.pendingTripCount = 0;
+    state.backup.pendingChangeCount = 0;
     state.backup.lastConfirmedISO = new Date().toISOString();
     state.backup.lastConfirmedTripCount = state.trips.length;
     state.backup.lastFilename = filename;
@@ -914,7 +1109,14 @@
 
   async function saveFullBackupToFiles(options = {}) {
     const automatic = Boolean(options.automatic);
-    const backup = createBackupFile();
+    let backup;
+    try {
+      backup = await createBackupFile();
+    } catch (error) {
+      console.error("Backup creation failed:", error);
+      window.alert(`The full ZIP backup could not be created.\n\n${error.message}`);
+      return false;
+    }
     let handoffCompleted = false;
 
     try {
@@ -931,7 +1133,7 @@
         });
         handoffCompleted = true;
       } else {
-        downloadFile(backup.filename, backup.content, "application/json");
+        downloadFile(backup.filename, backup.blob, "application/zip");
         handoffCompleted = true;
         window.alert(
           "The backup file was downloaded. Make sure it is saved or moved into iCloud Drive or another safe folder."
@@ -943,7 +1145,7 @@
       } else {
         console.error("Backup share failed:", error);
         try {
-          downloadFile(backup.filename, backup.content, "application/json");
+          downloadFile(backup.filename, backup.blob, "application/zip");
           handoffCompleted = true;
           window.alert(
             "The share sheet could not be used, so the backup was downloaded instead. Save or move it into iCloud Drive or another safe folder."
@@ -980,41 +1182,65 @@ ${fallbackError.message || error.message}`);
     return saveFullBackupToFiles({ automatic: false });
   }
 
-  function importBackupFile(file) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = JSON.parse(String(reader.result));
-        const imported = parsed?.backupFormat === "MileageLoggerFullBackup"
-          ? parsed.appState
-          : parsed;
+  async function importBackupFile(file) {
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const isZip = file.name.toLowerCase().endsWith(".zip") || (bytes[0] === 0x50 && bytes[1] === 0x4b);
+      let parsed;
+      let restoredPhotos = null;
 
-        if (!imported || !Array.isArray(imported.trips)) {
-          throw new Error("Backup does not contain a trip list.");
-        }
-
-        const confirmed = window.confirm("Restoring will replace all current mileage app data. Continue?");
-        if (!confirmed) return;
-
-        stopRouteTracking(false);
-        state = sanitizeState(imported);
-        ensureBackupState();
-        state.backup.pendingTripCount = 0;
-        state.backup.lastConfirmedISO = new Date().toISOString();
-        state.backup.lastConfirmedTripCount = state.trips.length;
-        state.backup.lastFilename = file.name || "Restored backup";
-        saveState();
-        renderAll();
-
-        if (state.activeTrip?.trackRoute) startRouteTracking();
-        showToast("Backup restored successfully.");
-      } catch (error) {
-        window.alert(`The backup could not be restored.
-
-${error.message}`);
+      if (isZip) {
+        if (!window.fflate) throw new Error("The ZIP restore component is unavailable.");
+        const entries = window.fflate.unzipSync(bytes);
+        if (!entries["app-data.json"]) throw new Error("The ZIP does not contain app-data.json.");
+        parsed = JSON.parse(window.fflate.strFromU8(entries["app-data.json"]));
+        restoredPhotos = (parsed.photoManifest || []).map((photo) => {
+          const photoBytes = entries[photo.path];
+          if (!photoBytes) throw new Error(`The ZIP is missing photo ${photo.name || photo.id}.`);
+          return {
+            ...photo,
+            blob: new Blob([photoBytes], { type: photo.type || "image/jpeg" })
+          };
+        });
+      } else {
+        parsed = JSON.parse(new TextDecoder().decode(bytes));
       }
-    };
-    reader.readAsText(file);
+
+      const imported = parsed?.backupFormat === "MileageLoggerFullBackup"
+        ? parsed.appState
+        : parsed;
+
+      if (!imported || !Array.isArray(imported.trips)) {
+        throw new Error("Backup does not contain a trip list.");
+      }
+
+      const photoMessage = restoredPhotos === null
+        ? "\n\nThis older JSON backup does not contain photo files. Existing private photos on this device will be left untouched."
+        : `\n\n${restoredPhotos.length} inspection photo${restoredPhotos.length === 1 ? "" : "s"} will also be restored.`;
+      const confirmed = window.confirm(`Restoring will replace all current mileage app data.${photoMessage}\n\nContinue?`);
+      if (!confirmed) return;
+
+      stopRouteTracking(false);
+      if (restoredPhotos !== null) {
+        if (!window.MileageMediaStore) throw new Error("Private photo storage is unavailable.");
+        await window.MileageMediaStore.replaceAllPhotos(restoredPhotos);
+      }
+      state = sanitizeState(imported);
+      ensureBackupState();
+      state.backup.pendingTripCount = 0;
+      state.backup.pendingChangeCount = 0;
+      state.backup.lastConfirmedISO = new Date().toISOString();
+      state.backup.lastConfirmedTripCount = state.trips.length;
+      state.backup.lastFilename = file.name || "Restored backup";
+      saveState();
+      renderAll();
+
+      if (state.activeTrip?.trackRoute) startRouteTracking();
+      showToast("Backup restored successfully.");
+    } catch (error) {
+      console.error("Backup restore failed:", error);
+      window.alert(`The backup could not be restored.\n\n${error.message}`);
+    }
   }
 
   function renderVendorLocations() {
@@ -1716,6 +1942,20 @@ ${error.message}`);
     renderLog();
   });
 
+  $("tripEditForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveTripEdits();
+  });
+  $("closeTripEditBtn").addEventListener("click", closeTripEditor);
+  $("cancelTripEditBtn").addEventListener("click", closeTripEditor);
+  $("tripEditStartOdo").addEventListener("input", updateTripEditPreview);
+  $("tripEditEndOdo").addEventListener("input", updateTripEditPreview);
+
+  $("tripTable").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-edit-trip]");
+    if (button) openTripEditor(button.dataset.editTrip);
+  });
+
   $("tripTable").addEventListener("click", (event) => {
     const button = event.target.closest("[data-delete-trip]");
     if (!button) return;
@@ -1728,9 +1968,12 @@ ${error.message}`);
     if (!confirmed) return;
 
     state.trips = state.trips.filter((item) => item.id !== id);
+    ensureBackupState();
+    state.backup.pendingChangeCount += 1;
+    state.backup.lastRequiredISO = new Date().toISOString();
     saveState();
     renderAll();
-    showToast("Trip deleted.");
+    showToast("Trip deleted. Save a new full backup.");
   });
 
   $("tripTable").addEventListener("click", (event) => {
@@ -1919,8 +2162,8 @@ ${error.message}`);
   $("shareStaBtn").addEventListener("click", () => generateSta("share"));
   $("downloadStaBtn").addEventListener("click", () => generateSta("download"));
 
-  $("resetDataBtn").addEventListener("click", () => {
-    const first = window.confirm("Delete the active trip, all completed trips, GPS records, backup status, saved lists, and settings? The privately imported STA master will remain installed.");
+  $("resetDataBtn").addEventListener("click", async () => {
+    const first = window.confirm("Delete the active trip, all completed trips, inspections, inspection photos, GPS records, backup status, saved lists, and settings? The privately imported STA master will remain installed.");
     if (!first) return;
 
     const second = window.confirm("This cannot be undone unless you already exported a backup. Delete everything?");
@@ -1929,6 +2172,9 @@ ${error.message}`);
     stopRouteTracking(false);
     localStorage.removeItem(STORAGE_KEY);
     OLD_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    if (window.MileageMediaStore) {
+      await window.MileageMediaStore.replaceAllPhotos([]);
+    }
     state = defaultState();
     renderAll();
     hidePrimaryPanels();
