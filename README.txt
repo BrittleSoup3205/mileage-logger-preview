@@ -32,6 +32,11 @@ WHAT THE FULL BACKUP CONTAINS
 
 The private STA master PDF is intentionally not included. Keep the original master PDF separately in Files.
 
+PHOTOS IN FULL BACKUPS
+----------------------
+Photos in new full ZIP backups use normal .jpg, .png, .webp, or .heic filenames.
+They can be opened directly on a computer after the ZIP is extracted. Older backups containing .bin photo files remain fully restorable.
+
 BACKUP FILE NAME
 ----------------
 Example:
@@ -47,6 +52,18 @@ Older JSON backups remain supported. They restore the app data and leave existin
 CSV
 ---
 CSV is a readable spreadsheet copy but is not the complete restore file. Use the ZIP file as the required backup.
+
+INSPECTION PACKAGES
+-------------------
+Open Inspection History and tap Export Package on an inspection record.
+The computer-friendly ZIP contains:
+- A printable PDF inspection report
+- A plain-text inspection update
+- An Excel-readable CSV data file
+- An HTML photo index
+- A Photos folder with normal image filenames
+
+Inspection packages are for reporting and recordkeeping. They do not replace the required full restore backup.
 
 TRIP LOG CORRECTIONS
 --------------------

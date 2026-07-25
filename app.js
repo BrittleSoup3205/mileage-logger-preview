@@ -1047,6 +1047,25 @@
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
   }
 
+  function photoFileExtension(type, name = "") {
+    const normalizedType = String(type || "").toLowerCase();
+    if (normalizedType === "image/png") return "png";
+    if (normalizedType === "image/webp") return "webp";
+    if (normalizedType === "image/heic" || normalizedType === "image/heif") return "heic";
+    const nameMatch = String(name || "").toLowerCase().match(/\.(jpe?g|png|webp|heic|heif)$/);
+    if (nameMatch) return nameMatch[1] === "jpeg" ? "jpg" : nameMatch[1];
+    return "jpg";
+  }
+
+  function safePhotoName(value, fallback) {
+    const cleaned = String(value || "")
+      .replace(/\.[^.]+$/, "")
+      .replace(/[^a-z0-9_-]+/gi, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 70);
+    return cleaned || fallback;
+  }
+
   function buildBackupPackage(photoManifest = []) {
     ensureBackupState();
     return {
@@ -1066,24 +1085,30 @@
     if (!window.MileageMediaStore) throw new Error("Private photo storage is unavailable.");
 
     const photos = await window.MileageMediaStore.getAllPhotos();
-    const photoManifest = photos.map((photo) => ({
-      id: photo.id,
-      inspectionId: photo.inspectionId,
-      name: photo.name,
-      type: photo.type,
-      size: photo.size,
-      width: photo.width,
-      height: photo.height,
-      createdISO: photo.createdISO,
-      caption: photo.caption || "",
-      path: `photos/${photo.id}.bin`
-    }));
+    const photoManifest = photos.map((photo, index) => {
+      const extension = photoFileExtension(photo.type, photo.name);
+      const sequence = String(index + 1).padStart(3, "0");
+      const friendlyName = safePhotoName(photo.caption || photo.name, `inspection_photo_${sequence}`);
+      return {
+        id: photo.id,
+        inspectionId: photo.inspectionId,
+        name: photo.name,
+        type: photo.type,
+        size: photo.size,
+        width: photo.width,
+        height: photo.height,
+        createdISO: photo.createdISO,
+        caption: photo.caption || "",
+        path: `photos/${sequence}_${friendlyName}.${extension}`
+      };
+    });
     const entries = {
       "app-data.json": window.fflate.strToU8(JSON.stringify(buildBackupPackage(photoManifest), null, 2))
     };
 
-    for (const photo of photos) {
-      entries[`photos/${photo.id}.bin`] = new Uint8Array(await photo.blob.arrayBuffer());
+    for (let index = 0; index < photos.length; index += 1) {
+      const photo = photos[index];
+      entries[photoManifest[index].path] = new Uint8Array(await photo.blob.arrayBuffer());
     }
 
     const bytes = window.fflate.zipSync(entries, { level: 6 });

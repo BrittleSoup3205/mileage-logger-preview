@@ -808,7 +808,7 @@
     const createdISO = existing?.createdISO || nowISO();
 
     const inspection = {
-      id: existing?.id || makeId(),
+      id: existing?.id || editingInspectionId || makeId(),
       schemaVersion: INSPECTION_SCHEMA_VERSION,
       tripId: selectedTripId || null,
       tripSnapshot: trip ? tripSnapshot(trip) : (existing?.tripId === selectedTripId ? existing.tripSnapshot : null),
@@ -918,6 +918,7 @@
 
           <div class="inspection-record-actions">
             <button class="button button-secondary button-small" type="button" data-edit-inspection="${escapeHTML(inspection.id)}">Edit</button>
+            <button class="button inspection-button button-small" type="button" data-export-inspection="${escapeHTML(inspection.id)}">Export Package</button>
             ${snapshot?.startLocation ? `<a class="button button-secondary button-small" href="${mapLink(snapshot.startLocation, "Trip Start")}" target="_blank" rel="noopener">Start Map</a>` : ""}
             ${snapshot?.endLocation ? `<a class="button button-secondary button-small" href="${mapLink(snapshot.endLocation, "Trip End")}" target="_blank" rel="noopener">End Map</a>` : ""}
             <button class="button button-danger-outline button-small" type="button" data-delete-inspection="${escapeHTML(inspection.id)}">Delete</button>
@@ -979,6 +980,413 @@
         </div>
       </article>
     `).join("");
+  }
+
+  function safeFilePart(value, fallback = "record") {
+    const cleaned = String(value || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\.[^.]+$/, "")
+      .replace(/[^a-z0-9_-]+/gi, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 70);
+    return cleaned || fallback;
+  }
+
+  function photoExtension(photo) {
+    const type = String(photo?.type || photo?.blob?.type || "").toLowerCase();
+    if (type === "image/png") return "png";
+    if (type === "image/webp") return "webp";
+    if (type === "image/heic" || type === "image/heif") return "heic";
+    const match = String(photo?.name || "").toLowerCase().match(/\.(jpe?g|png|webp|heic|heif)$/);
+    if (match) return match[1] === "jpeg" ? "jpg" : match[1];
+    return "jpg";
+  }
+
+  function packageBaseName(inspection) {
+    return [
+      "Inspection",
+      inspection.date || todayInputValue(),
+      inspection.vendor || "Facility",
+      inspection.projectNumber || inspection.equipmentTag || "Record"
+    ].map((part, index) => safeFilePart(part, index === 0 ? "Inspection" : "Record")).join("_");
+  }
+
+  function inspectionFollowUpText(inspection, status = "Open") {
+    return (inspection.followUps || [])
+      .filter((item) => status === "All" || (status === "Closed" ? item.status === "Closed" : item.status !== "Closed"))
+      .map((item) => {
+        const details = [
+          item.responsibleParty ? `Owner: ${item.responsibleParty}` : "",
+          item.dueDate ? `Due: ${displayDate(item.dueDate)}` : "",
+          `Status: ${item.status || "Open"}`
+        ].filter(Boolean).join("; ");
+        return `- ${item.action || "Follow-up"}${details ? ` (${details})` : ""}`;
+      })
+      .join("\r\n");
+  }
+
+  function buildInspectionUpdate(inspection, photoCount) {
+    const snapshot = inspection.tripSnapshot || {};
+    const lines = [
+      "INSPECTION UPDATE",
+      "",
+      `Date: ${displayDate(inspection.date)}`,
+      `Customer: ${inspection.customer || "Not entered"}`,
+      `Vendor / Facility: ${inspection.vendor || "Not entered"}`,
+      `Project: ${inspection.projectNumber || "Not entered"}`,
+      `PO / Vendor Job: ${inspection.purchaseOrderJob || "Not entered"}`,
+      `Equipment Tag: ${inspection.equipmentTag || "Not entered"}`,
+      `Inspection Type: ${inspection.inspectionType || "Inspection"}`,
+      `Activity: ${inspection.activity || "Not entered"}`,
+      `Status: ${inspection.status || "Not entered"}`,
+      `Acceptance / Release: ${inspection.acceptanceStatus || "Not Determined"}`,
+      `Time: ${inspection.startTime || "Not entered"} - ${inspection.endTime || "Not entered"}`,
+      `Hours On Site: ${inspection.hoursOnSite || "Not entered"}`,
+      "",
+      "SUMMARY",
+      inspection.summary || "No summary entered.",
+      "",
+      "OBSERVATIONS",
+      inspection.observations || "No observations entered.",
+      "",
+      "DEFICIENCIES / EXCEPTIONS",
+      inspection.deficiencies || "None entered.",
+      "",
+      "OPEN FOLLOW-UPS",
+      inspectionFollowUpText(inspection, "Open") || "None.",
+      "",
+      "RECORD DETAILS",
+      `Photos: ${photoCount}`,
+      `Mileage: ${snapshot.miles === undefined || snapshot.miles === null ? "Standalone inspection" : `${Number(snapshot.miles).toFixed(1)} miles`}`,
+      `GPS Route Miles: ${snapshot.gpsRouteMiles === undefined || snapshot.gpsRouteMiles === null ? "Not recorded" : Number(snapshot.gpsRouteMiles).toFixed(1)}`,
+      `STA Generated: ${snapshot.staGenerated ? "Yes" : "No"}`,
+      `STA Filename: ${snapshot.staFileName || "Not recorded"}`,
+      "",
+      `Generated by Mileage Logger on ${new Date().toLocaleString()}`
+    ];
+    return lines.join("\r\n");
+  }
+
+  function buildInspectionDataCsv(inspection, photoCount) {
+    const snapshot = inspection.tripSnapshot || {};
+    const header = [
+      "Date", "Customer", "Vendor / Facility", "Project Number", "PO / Vendor Job", "Equipment Tag",
+      "Inspection Type", "Activity", "Status", "Acceptance / Release", "Start Time", "End Time",
+      "Hours On Site", "Odometer Miles", "GPS Miles", "STA Generated", "STA Filename", "Photo Count",
+      "Summary", "Observations", "Deficiencies / Exceptions", "Open Follow-ups", "Closed Follow-ups",
+      "Created", "Modified"
+    ];
+    const row = [
+      displayDate(inspection.date), inspection.customer, inspection.vendor, inspection.projectNumber,
+      inspection.purchaseOrderJob, inspection.equipmentTag, inspection.inspectionType, inspection.activity,
+      inspection.status, inspection.acceptanceStatus, inspection.startTime, inspection.endTime,
+      inspection.hoursOnSite, snapshot.miles ?? "", snapshot.gpsRouteMiles ?? "",
+      snapshot.staGenerated ? "Yes" : "No", snapshot.staFileName || "", photoCount,
+      inspection.summary, inspection.observations, inspection.deficiencies,
+      inspectionFollowUpText(inspection, "Open"), inspectionFollowUpText(inspection, "Closed"),
+      formatDateTime(inspection.createdISO), formatDateTime(inspection.modifiedISO)
+    ];
+    return [header, row].map((values) => values.map(csvEscape).join(",")).join("\r\n");
+  }
+
+  function buildPhotoIndexHtml(inspection, photos) {
+    const cards = photos.length
+      ? photos.map((photo, index) => `
+        <article class="photo">
+          <img src="${escapeHTML(photo.packagePath)}" alt="${escapeHTML(photo.caption || photo.name || `Inspection photo ${index + 1}`)}">
+          <div>
+            <h2>Photo ${index + 1}</h2>
+            <p><strong>Caption:</strong> ${escapeHTML(photo.caption || "No caption entered.")}</p>
+            <p><strong>Original name:</strong> ${escapeHTML(photo.name || "Inspection photo")}</p>
+          </div>
+        </article>
+      `).join("")
+      : "<p>No photographs were attached to this inspection.</p>";
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${escapeHTML(packageBaseName(inspection))} Photo Index</title>
+  <style>
+    body{font-family:Arial,sans-serif;color:#172033;background:#f4f6f8;margin:0;padding:24px}
+    main{max-width:1000px;margin:auto}.header,.photo{background:white;border:1px solid #d9e0e8;border-radius:12px;padding:20px;margin-bottom:20px}
+    h1,h2{margin-top:0}.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+    .photo{display:grid;grid-template-columns:minmax(240px,2fr) minmax(180px,1fr);gap:20px;align-items:start}
+    img{display:block;width:100%;height:auto;border-radius:8px}@media(max-width:700px){.photo{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<main>
+  <section class="header">
+    <h1>Inspection Photo Index</h1>
+    <div class="meta">
+      <span><strong>Date:</strong> ${escapeHTML(displayDate(inspection.date))}</span>
+      <span><strong>Customer:</strong> ${escapeHTML(inspection.customer || "Not entered")}</span>
+      <span><strong>Vendor:</strong> ${escapeHTML(inspection.vendor || "Not entered")}</span>
+      <span><strong>Project:</strong> ${escapeHTML(inspection.projectNumber || "Not entered")}</span>
+      <span><strong>Activity:</strong> ${escapeHTML(inspection.activity || "Not entered")}</span>
+      <span><strong>Photos:</strong> ${photos.length}</span>
+    </div>
+  </section>
+  ${cards}
+</main>
+</body>
+</html>`;
+  }
+
+  function pdfSafeText(value) {
+    return String(value ?? "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201c\u201d]/g, "\"")
+      .replace(/[\u2013\u2014]/g, "-")
+      .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "");
+  }
+
+  function wrapPdfText(text, font, size, maxWidth) {
+    const lines = [];
+    const paragraphs = pdfSafeText(text || "").split(/\r?\n/);
+    for (const paragraph of paragraphs) {
+      if (!paragraph.trim()) {
+        lines.push("");
+        continue;
+      }
+      const words = paragraph.split(/\s+/);
+      let line = "";
+      for (const word of words) {
+        const candidate = line ? `${line} ${word}` : word;
+        if (font.widthOfTextAtSize(candidate, size) <= maxWidth || !line) {
+          line = candidate;
+        } else {
+          lines.push(line);
+          line = word;
+        }
+      }
+      if (line) lines.push(line);
+    }
+    return lines;
+  }
+
+  async function buildInspectionPdf(inspection, photos) {
+    if (!window.PDFLib?.PDFDocument) throw new Error("The PDF component is unavailable.");
+    const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+    const document = await PDFDocument.create();
+    const regular = await document.embedFont(StandardFonts.Helvetica);
+    const bold = await document.embedFont(StandardFonts.HelveticaBold);
+    const pageSize = [612, 792];
+    const margin = 44;
+    const contentWidth = pageSize[0] - margin * 2;
+    let page;
+    let y;
+
+    const addPage = () => {
+      page = document.addPage(pageSize);
+      y = pageSize[1] - margin;
+      page.drawText("Mileage Logger Inspection Record", {
+        x: margin,
+        y,
+        size: 9,
+        font: bold,
+        color: rgb(0.22, 0.35, 0.48)
+      });
+      y -= 22;
+    };
+    const ensureSpace = (height) => {
+      if (y - height < margin) addPage();
+    };
+    const drawWrapped = (text, options = {}) => {
+      const font = options.bold ? bold : regular;
+      const size = options.size || 10;
+      const lineHeight = options.lineHeight || size * 1.35;
+      const lines = wrapPdfText(text || "", font, size, options.width || contentWidth);
+      for (const line of lines) {
+        ensureSpace(lineHeight);
+        page.drawText(line || " ", {
+          x: options.x || margin,
+          y,
+          size,
+          font,
+          color: options.color || rgb(0.08, 0.12, 0.18)
+        });
+        y -= lineHeight;
+      }
+    };
+    const drawField = (label, value) => {
+      drawWrapped(`${label}: ${value || "Not entered"}`, { size: 10 });
+    };
+    const drawSection = (title, text) => {
+      ensureSpace(55);
+      y -= 8;
+      drawWrapped(title.toUpperCase(), { bold: true, size: 11, color: rgb(0.06, 0.35, 0.50) });
+      drawWrapped(text || "None entered.", { size: 10 });
+    };
+
+    addPage();
+    drawWrapped("INSPECTION REPORT", { bold: true, size: 20, lineHeight: 25, color: rgb(0.04, 0.24, 0.36) });
+    y -= 5;
+    drawField("Date", displayDate(inspection.date));
+    drawField("Customer", inspection.customer);
+    drawField("Vendor / Facility", inspection.vendor);
+    drawField("Project Number", inspection.projectNumber);
+    drawField("PO / Vendor Job", inspection.purchaseOrderJob);
+    drawField("Equipment Tag", inspection.equipmentTag);
+    drawField("Inspection Type", inspection.inspectionType);
+    drawField("Activity", inspection.activity);
+    drawField("Status", inspection.status);
+    drawField("Acceptance / Release", inspection.acceptanceStatus);
+    drawField("Time", `${inspection.startTime || "Not entered"} - ${inspection.endTime || "Not entered"}`);
+    drawField("Hours On Site", inspection.hoursOnSite);
+
+    const snapshot = inspection.tripSnapshot || {};
+    drawField("Mileage", snapshot.miles === undefined || snapshot.miles === null ? "Standalone inspection" : `${Number(snapshot.miles).toFixed(1)} miles`);
+    drawField("GPS Route Miles", snapshot.gpsRouteMiles === undefined || snapshot.gpsRouteMiles === null ? "Not recorded" : Number(snapshot.gpsRouteMiles).toFixed(1));
+    drawField("STA Generated", snapshot.staGenerated ? "Yes" : "No");
+    drawField("Attached Photos", String(photos.length));
+
+    drawSection("Summary", inspection.summary);
+    drawSection("Observations", inspection.observations);
+    drawSection("Deficiencies / Exceptions", inspection.deficiencies || "None entered.");
+    drawSection("Open Follow-ups", inspectionFollowUpText(inspection, "Open") || "None.");
+    drawSection("Closed Follow-ups", inspectionFollowUpText(inspection, "Closed") || "None.");
+
+    for (let index = 0; index < photos.length; index += 1) {
+      const photo = photos[index];
+      addPage();
+      drawWrapped(`PHOTO ${index + 1} OF ${photos.length}`, { bold: true, size: 14, lineHeight: 20 });
+      drawWrapped(photo.caption || photo.name || "Inspection photo", { size: 10 });
+      y -= 8;
+      try {
+        const bytes = new Uint8Array(await photo.blob.arrayBuffer());
+        const embedded = String(photo.type || photo.blob.type || "").toLowerCase() === "image/png"
+          ? await document.embedPng(bytes)
+          : await document.embedJpg(bytes);
+        const availableHeight = Math.max(120, y - margin - 30);
+        const scale = Math.min(contentWidth / embedded.width, availableHeight / embedded.height, 1);
+        const width = embedded.width * scale;
+        const height = embedded.height * scale;
+        page.drawImage(embedded, {
+          x: margin + (contentWidth - width) / 2,
+          y: y - height,
+          width,
+          height
+        });
+        y -= height + 18;
+        drawWrapped(`File: ${photo.packagePath}`, { size: 8, color: rgb(0.35, 0.38, 0.42) });
+      } catch (error) {
+        drawWrapped("This photo is included in the Photos folder but could not be embedded in the PDF.", {
+          size: 10,
+          color: rgb(0.65, 0.18, 0.12)
+        });
+      }
+    }
+
+    const pages = document.getPages();
+    pages.forEach((currentPage, index) => {
+      currentPage.drawText(`Page ${index + 1} of ${pages.length}`, {
+        x: pageSize[0] - margin - 70,
+        y: 22,
+        size: 8,
+        font: regular,
+        color: rgb(0.4, 0.42, 0.45)
+      });
+    });
+    return new Uint8Array(await document.save());
+  }
+
+  async function loadPackagePhotos(inspection) {
+    if (!window.MileageMediaStore) return [];
+    const stored = await window.MileageMediaStore.getAllPhotos();
+    // Match by the photo's unique ID so packages also include photos created by
+    // older builds that saved a temporary inspection ID before the record itself.
+    const byId = new Map(stored.map((photo) => [photo.id, photo]));
+    return (inspection.photos || []).map((metadata, index) => {
+      const photo = byId.get(metadata.id);
+      if (!photo?.blob) return null;
+      const extension = photoExtension(photo);
+      const sequence = String(index + 1).padStart(2, "0");
+      const friendlyName = safeFilePart(photo.caption || photo.name, `Inspection_Photo_${sequence}`);
+      return {
+        ...photo,
+        ...metadata,
+        blob: photo.blob,
+        packagePath: `Photos/${sequence}_${friendlyName}.${extension}`
+      };
+    }).filter(Boolean);
+  }
+
+  async function deliverInspectionPackage(filename, blob) {
+    const file = new File([blob], filename, { type: "application/zip" });
+    const touchDevice = navigator.maxTouchPoints > 0 || window.matchMedia?.("(pointer: coarse)")?.matches;
+    if (touchDevice && navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({
+          title: "Mileage Logger Inspection Package",
+          text: "Save this inspection package to Files or share it to your computer.",
+          files: [file]
+        });
+        showInspectionToast("Inspection package shared.");
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          showInspectionToast("Inspection package was not saved.");
+          return;
+        }
+        console.warn("Inspection package share failed; using download instead:", error);
+      }
+    }
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    showInspectionToast("Inspection package downloaded.");
+  }
+
+  async function exportInspectionPackage(inspection, button) {
+    if (!window.fflate) {
+      window.alert("The ZIP component is unavailable. Reopen the app while online and try again.");
+      return;
+    }
+    const originalText = button?.textContent || "Export Package";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Building Package...";
+    }
+    try {
+      const photos = await loadPackagePhotos(inspection);
+      const baseName = packageBaseName(inspection);
+      const updateText = buildInspectionUpdate(inspection, photos.length);
+      const csv = buildInspectionDataCsv(inspection, photos.length);
+      const html = buildPhotoIndexHtml(inspection, photos);
+      const pdf = await buildInspectionPdf(inspection, photos);
+      const entries = {
+        [`${baseName}_Report.pdf`]: pdf,
+        [`${baseName}_Update.txt`]: window.fflate.strToU8(updateText),
+        [`${baseName}_Data.csv`]: window.fflate.strToU8(csv),
+        [`${baseName}_Photo_Index.html`]: window.fflate.strToU8(html)
+      };
+      for (const photo of photos) {
+        entries[photo.packagePath] = new Uint8Array(await photo.blob.arrayBuffer());
+      }
+      const bytes = window.fflate.zipSync(entries, { level: 6 });
+      const filename = `${baseName}_Package.zip`;
+      await deliverInspectionPackage(filename, new Blob([bytes], { type: "application/zip" }));
+    } catch (error) {
+      console.error("Inspection package export failed:", error);
+      window.alert(`The inspection package could not be created.\n\n${error.message}`);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
   }
 
   function exportInspectionCSV() {
@@ -1179,6 +1587,14 @@
           showInspectionSection(false);
           openInspectionForm(inspection);
         }
+        return;
+      }
+
+      const exportButton = event.target.closest("[data-export-inspection]");
+      if (exportButton) {
+        const state = readState();
+        const inspection = state.settings.inspections.find((item) => item.id === exportButton.dataset.exportInspection);
+        if (inspection) await exportInspectionPackage(inspection, exportButton);
         return;
       }
 
