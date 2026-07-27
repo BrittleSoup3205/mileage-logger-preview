@@ -25,6 +25,19 @@ Use test information only.
 11. Confirm the CSV opens in Excel and the text update opens in Notepad.
 12. Confirm the photos use normal image extensions and open individually.
 
+## Private S&B Word template
+
+1. Open **Inspections**.
+2. Tap **Import S&B Word Template** and choose the approved blank `.docx`.
+3. Confirm the status changes to **INSTALLED**.
+4. Export an inspection package.
+5. Open the editable Word report and confirm:
+   - the S&B branding, header, tables, and footer remain intact;
+   - available customer, project, vendor, date, activity, summary, observations, action items, and release information are populated;
+   - up to four attached PNG/JPEG photos appear in the attachment grid; and
+   - the report remains editable in Microsoft Word.
+6. Confirm the S&B template itself is not present in the hosted repository or normal backup ZIP.
+
 ## Full restore backup
 
 1. Make a new **Save Full Backup to Files** backup.

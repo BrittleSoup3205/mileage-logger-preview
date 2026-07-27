@@ -4,6 +4,13 @@
   const STATE_KEY = "mileage_logger_state_v3";
   const INSPECTION_SCHEMA_VERSION = 2;
   const REFRESH_INTERVAL_MS = 1200;
+  const PRIVATE_FILE_DB_NAME = "MileageLoggerPrivateFiles";
+  const PRIVATE_FILE_DB_VERSION = 1;
+  const PRIVATE_FILE_DB_STORE = "privateFiles";
+  const INSPECTION_REPORT_TEMPLATE_KEY = "inspectionReportTemplate";
+  const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+  const XML_NS = "http://www.w3.org/XML/1998/namespace";
   const nativeSetItem = window.localStorage.setItem.bind(window.localStorage);
   const $ = (id) => document.getElementById(id);
 
@@ -16,6 +23,7 @@
   let inspectionListObjectUrls = [];
   let activeView = "inspections";
   let lastStateSignature = "";
+  let inspectionTemplateInstalled = false;
 
   const INSPECTION_TYPES = [
     "Inspection",
@@ -61,6 +69,174 @@
   function csvEscape(value) {
     const text = String(value ?? "");
     return /[\",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  function openInspectionPrivateFileDatabase() {
+    return new Promise((resolve, reject) => {
+      if (!("indexedDB" in window)) {
+        reject(new Error("This browser does not support private local file storage."));
+        return;
+      }
+      const request = indexedDB.open(PRIVATE_FILE_DB_NAME, PRIVATE_FILE_DB_VERSION);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(PRIVATE_FILE_DB_STORE)) {
+          database.createObjectStore(PRIVATE_FILE_DB_STORE, { keyPath: "id" });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(
+        request.error || new Error("The private file database could not be opened.")
+      );
+    });
+  }
+
+  async function readInspectionReportTemplateRecord() {
+    const database = await openInspectionPrivateFileDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(PRIVATE_FILE_DB_STORE, "readonly");
+      const request = transaction.objectStore(PRIVATE_FILE_DB_STORE).get(INSPECTION_REPORT_TEMPLATE_KEY);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(
+        request.error || new Error("The private S&B report template could not be read.")
+      );
+      transaction.oncomplete = () => database.close();
+      transaction.onerror = () => {
+        database.close();
+        reject(transaction.error || new Error("The private template transaction failed."));
+      };
+    });
+  }
+
+  async function writeInspectionReportTemplateRecord(record) {
+    const database = await openInspectionPrivateFileDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(PRIVATE_FILE_DB_STORE, "readwrite");
+      transaction.objectStore(PRIVATE_FILE_DB_STORE).put(record);
+      transaction.oncomplete = () => {
+        database.close();
+        resolve();
+      };
+      transaction.onerror = () => {
+        database.close();
+        reject(transaction.error || new Error("The private S&B report template could not be saved."));
+      };
+      transaction.onabort = () => {
+        database.close();
+        reject(transaction.error || new Error("Saving the private S&B report template was canceled."));
+      };
+    });
+  }
+
+  async function deleteInspectionReportTemplateRecord() {
+    const database = await openInspectionPrivateFileDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(PRIVATE_FILE_DB_STORE, "readwrite");
+      transaction.objectStore(PRIVATE_FILE_DB_STORE).delete(INSPECTION_REPORT_TEMPLATE_KEY);
+      transaction.oncomplete = () => {
+        database.close();
+        resolve();
+      };
+      transaction.onerror = () => {
+        database.close();
+        reject(transaction.error || new Error("The private S&B report template could not be removed."));
+      };
+    });
+  }
+
+  function privateFileSize(bytes) {
+    const size = Number(bytes || 0);
+    if (size < 1024) return `${size} bytes`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function validateInspectionReportTemplateBytes(bytes) {
+    if (!window.fflate) throw new Error("The Word document component is unavailable.");
+    let files;
+    try {
+      files = window.fflate.unzipSync(bytes);
+    } catch (error) {
+      throw new Error("This file is not a readable Word .docx document.");
+    }
+    const requiredParts = [
+      "word/document.xml",
+      "word/header1.xml",
+      "word/footer1.xml",
+      "word/_rels/document.xml.rels",
+      "[Content_Types].xml"
+    ];
+    const missing = requiredParts.filter((path) => !files[path]);
+    if (missing.length) {
+      throw new Error(`This Word file is missing required template parts: ${missing.join(", ")}.`);
+    }
+    const documentXml = parseWordXml(files["word/document.xml"], "word/document.xml");
+    const headerXml = parseWordXml(files["word/header1.xml"], "word/header1.xml");
+    const documentText = wordNodeText(documentXml);
+    const headerText = wordNodeText(headerXml);
+    const requiredDocumentLabels = ["VENDOR:", "ACTION ITEMS:", "ATTACHMENTS:", "Figure 1"];
+    const requiredHeaderLabels = ["SOURCE INSPECTION REPORT", "CLIENT PROJECT NUMBER:", "DATE OF REPORT:"];
+    const missingLabels = [
+      ...requiredDocumentLabels.filter((label) => !documentText.includes(label)),
+      ...requiredHeaderLabels.filter((label) => !headerText.includes(label))
+    ];
+    if (missingLabels.length) {
+      throw new Error(`This does not appear to be the approved S&B blank inspection report. Missing: ${missingLabels.join(", ")}.`);
+    }
+  }
+
+  async function importInspectionReportTemplate(file) {
+    if (!file || !String(file.name || "").toLowerCase().endsWith(".docx")) {
+      throw new Error("Choose the approved blank S&B inspection report in Word .docx format.");
+    }
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    validateInspectionReportTemplateBytes(bytes);
+    await writeInspectionReportTemplateRecord({
+      id: INSPECTION_REPORT_TEMPLATE_KEY,
+      name: file.name,
+      type: file.type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      size: file.size || bytes.byteLength,
+      importedISO: nowISO(),
+      bytes: arrayBuffer
+    });
+  }
+
+  async function refreshInspectionReportTemplateStatus() {
+    const status = $("inspectionTemplateStatus");
+    const pill = $("inspectionTemplatePill");
+    const importButton = $("importInspectionTemplateBtn");
+    const removeButton = $("removeInspectionTemplateBtn");
+    if (!status || !pill || !importButton || !removeButton) return false;
+    try {
+      const record = await readInspectionReportTemplateRecord();
+      inspectionTemplateInstalled = Boolean(record?.bytes);
+      if (!inspectionTemplateInstalled) {
+        status.textContent = "No private S&B Word template is installed. Exports will use the standard editable report.";
+        status.className = "private-master-status warning";
+        pill.textContent = "NOT INSTALLED";
+        pill.className = "pill active";
+        importButton.textContent = "Import S&B Word Template";
+        removeButton.disabled = true;
+        return false;
+      }
+      const imported = record.importedISO ? new Date(record.importedISO).toLocaleString() : "date unavailable";
+      status.innerHTML = `<strong>${escapeHTML(record.name || "S&B inspection report template")}</strong><br>Stored privately on this device • ${escapeHTML(privateFileSize(record.size))} • imported ${escapeHTML(imported)}`;
+      status.className = "private-master-status installed";
+      pill.textContent = "INSTALLED";
+      pill.className = "pill ready";
+      importButton.textContent = "Replace S&B Word Template";
+      removeButton.disabled = false;
+      return true;
+    } catch (error) {
+      inspectionTemplateInstalled = false;
+      status.textContent = `Private template storage error: ${error.message}`;
+      status.className = "private-master-status error";
+      pill.textContent = "ERROR";
+      pill.className = "pill active";
+      removeButton.disabled = true;
+      return false;
+    }
   }
 
   function readState() {
@@ -280,9 +456,13 @@
       .inspection-toolbar .active-view { outline: 3px solid color-mix(in srgb, var(--info), transparent 65%); }
       .inspection-backup-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; padding: 12px; border: 1px solid var(--warning); border-radius: 12px; color: var(--warning); background: color-mix(in srgb, var(--warning), transparent 94%); }
       .inspection-backup-notice.current { color: var(--success); border-color: var(--success); background: color-mix(in srgb, var(--success), transparent 94%); }
+      .inspection-template-panel { margin: 12px 0 15px; padding: 13px; border: 1px solid var(--line); border-radius: 13px; background: color-mix(in srgb, var(--card), var(--bg) 28%); }
+      .inspection-template-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+      .inspection-template-heading h3 { margin: 1px 0 0; }
       .inspection-form-panel { margin: 13px 0 16px; padding: 14px; border: 2px solid var(--info); border-radius: 14px; background: color-mix(in srgb, var(--info), transparent 96%); }
       .inspection-form-open #inspectionDashboard,
       .inspection-form-open #inspectionBackupNotice,
+      .inspection-form-open .inspection-template-panel,
       .inspection-form-open .inspection-toolbar,
       .inspection-form-open .log-toolbar,
       .inspection-form-open #inspectionList { display: none; }
@@ -326,7 +506,7 @@
         .followup-editor-grid { grid-template-columns: 1fr; }
         .inspection-photo-card { grid-template-columns: 1fr; }
         .inspection-photo-preview { min-height: 180px; }
-        .inspection-record-heading, .inspection-backup-notice { flex-direction: column; }
+        .inspection-record-heading, .inspection-backup-notice, .inspection-template-heading { flex-direction: column; }
       }
     `;
     document.head.appendChild(style);
@@ -382,6 +562,27 @@
         <div id="inspectionDashboard" class="inspection-dashboard"></div>
         <div id="inspectionBackupNotice" class="inspection-backup-notice"></div>
 
+        <section class="inspection-template-panel" aria-labelledby="inspectionTemplateTitle">
+          <div class="inspection-template-heading">
+            <div>
+              <p class="eyebrow">Stored only on this device</p>
+              <h3 id="inspectionTemplateTitle">Private S&B Word Report Template</h3>
+            </div>
+            <span id="inspectionTemplatePill" class="pill">CHECKING</span>
+          </div>
+          <div id="inspectionTemplateStatus" class="private-master-status">
+            Checking this device for an imported S&B Word template…
+          </div>
+          <div class="form-actions wrap">
+            <button id="importInspectionTemplateBtn" class="button inspection-button button-small" type="button">Import S&B Word Template</button>
+            <button id="removeInspectionTemplateBtn" class="button button-danger-outline button-small" type="button" disabled>Remove Private Template</button>
+            <input id="inspectionTemplateFileInput" class="hidden" type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx">
+          </div>
+          <p class="privacy-note compact-note">
+            The S&B template is not uploaded to GitHub or included in backups. When installed, Export Package uses it for the editable Word report.
+          </p>
+        </section>
+
         <div class="inspection-toolbar">
           <button id="newInspectionBtn" class="button inspection-button" type="button">New Inspection</button>
           <button id="inspectionListViewBtn" class="button button-secondary active-view" type="button">Inspection History</button>
@@ -423,6 +624,7 @@
       $(id)?.classList.add("hidden");
     });
     $("inspectionSection")?.classList.remove("hidden");
+    refreshInspectionReportTemplateStatus();
     if (openNew) openInspectionForm(null, tripId);
     setTimeout(() => $("inspectionSection")?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
   }
@@ -1191,9 +1393,9 @@
     </w:tbl>`;
   }
 
-  function wordImageParagraph(photo, relationshipId, drawingId, mediaName) {
-    const maxWidth = 6.2;
-    const maxHeight = 7.0;
+  function wordImageParagraph(photo, relationshipId, drawingId, mediaName, options = {}) {
+    const maxWidth = Number(options.maxWidth) || 6.2;
+    const maxHeight = Number(options.maxHeight) || 7.0;
     const sourceWidth = Number(photo.width) || 1200;
     const sourceHeight = Number(photo.height) || 900;
     const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
@@ -1221,6 +1423,306 @@
         </wp:inline>
       </w:drawing></w:r>
     </w:p>`;
+  }
+
+  function parseWordXml(bytes, partName) {
+    const xml = window.fflate.strFromU8(bytes);
+    const document = new DOMParser().parseFromString(xml, "application/xml");
+    const parserError = document.getElementsByTagName("parsererror")[0];
+    if (parserError) throw new Error(`The S&B template contains invalid XML in ${partName}.`);
+    return document;
+  }
+
+  function serializeWordXml(document) {
+    return window.fflate.strToU8(new XMLSerializer().serializeToString(document));
+  }
+
+  function wordElements(parent, localName) {
+    return Array.from(parent.getElementsByTagNameNS(WORD_NS, localName));
+  }
+
+  function wordNodeText(parent) {
+    return wordElements(parent, "t").map((node) => node.textContent || "").join("");
+  }
+
+  function setWordParagraphText(paragraph, value) {
+    const document = paragraph.ownerDocument;
+    const firstRun = wordElements(paragraph, "r")[0];
+    const runProperties = firstRun ? wordElements(firstRun, "rPr")[0]?.cloneNode(true) : null;
+    Array.from(paragraph.childNodes).forEach((node) => {
+      if (!(node.nodeType === 1 && node.namespaceURI === WORD_NS && node.localName === "pPr")) {
+        paragraph.removeChild(node);
+      }
+    });
+    String(value ?? "").split(/\r?\n/).forEach((line, index) => {
+      const run = document.createElementNS(WORD_NS, "w:r");
+      if (runProperties) run.appendChild(runProperties.cloneNode(true));
+      if (index) run.appendChild(document.createElementNS(WORD_NS, "w:br"));
+      const text = document.createElementNS(WORD_NS, "w:t");
+      text.setAttributeNS(XML_NS, "xml:space", "preserve");
+      text.textContent = line || " ";
+      run.appendChild(text);
+      paragraph.appendChild(run);
+    });
+  }
+
+  function tableRows(table) {
+    return Array.from(table.childNodes).filter(
+      (node) => node.nodeType === 1 && node.namespaceURI === WORD_NS && node.localName === "tr"
+    );
+  }
+
+  function rowCells(row) {
+    return Array.from(row.childNodes).filter(
+      (node) => node.nodeType === 1 && node.namespaceURI === WORD_NS && node.localName === "tc"
+    );
+  }
+
+  function setWordCellText(table, rowIndex, cellIndex, value) {
+    const row = tableRows(table)[rowIndex];
+    const cell = row ? rowCells(row)[cellIndex] : null;
+    if (!cell) return;
+    let paragraph = Array.from(cell.childNodes).find(
+      (node) => node.nodeType === 1 && node.namespaceURI === WORD_NS && node.localName === "p"
+    );
+    if (!paragraph) {
+      paragraph = cell.ownerDocument.createElementNS(WORD_NS, "w:p");
+      cell.appendChild(paragraph);
+    }
+    setWordParagraphText(paragraph, value || " ");
+  }
+
+  function setHeaderLabelValue(table, rowIndex, cellIndex, label, value) {
+    setWordCellText(table, rowIndex, cellIndex, `${label}${value ? ` ${value}` : " "}`);
+  }
+
+  function normalizedWordText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim().toUpperCase();
+  }
+
+  function hasWordAncestor(element, localName) {
+    let parent = element?.parentElement || null;
+    while (parent) {
+      if (parent.namespaceURI === WORD_NS && parent.localName === localName) return true;
+      parent = parent.parentElement;
+    }
+    return false;
+  }
+
+  function findWordParagraph(document, label) {
+    const expected = normalizedWordText(label);
+    return wordElements(document, "p").find(
+      (paragraph) => (
+        !hasWordAncestor(paragraph, "tc")
+        && normalizedWordText(wordNodeText(paragraph)) === expected
+      )
+    ) || null;
+  }
+
+  function nextWordParagraph(paragraph) {
+    let node = paragraph?.nextSibling || null;
+    while (node) {
+      if (node.nodeType === 1 && node.namespaceURI === WORD_NS && node.localName === "p") return node;
+      node = node.nextSibling;
+    }
+    return null;
+  }
+
+  function setParagraphAfterLabel(document, label, value) {
+    if (!value) return;
+    const labelParagraph = findWordParagraph(document, label);
+    const valueParagraph = nextWordParagraph(labelParagraph);
+    if (valueParagraph) setWordParagraphText(valueParagraph, value);
+  }
+
+  function setLabeledParagraphValue(document, label, value) {
+    if (!value) return;
+    const paragraph = findWordParagraph(document, label);
+    if (paragraph) setWordParagraphText(paragraph, `${label} ${value}`);
+  }
+
+  function importWordFragment(document, xml) {
+    const wrapper = new DOMParser().parseFromString(
+      `<root xmlns:w="${WORD_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">${xml}</root>`,
+      "application/xml"
+    );
+    const parserError = wrapper.getElementsByTagName("parsererror")[0];
+    if (parserError) throw new Error("The S&B photo layout could not be created.");
+    return document.importNode(wrapper.documentElement.firstElementChild, true);
+  }
+
+  function setPhotoCell(table, rowIndex, cellIndex, photo, relationshipId, drawingId, mediaName, figureNumber) {
+    const row = tableRows(table)[rowIndex];
+    const cell = row ? rowCells(row)[cellIndex] : null;
+    if (!cell) return;
+    Array.from(cell.childNodes).forEach((node) => {
+      if (!(node.nodeType === 1 && node.namespaceURI === WORD_NS && node.localName === "tcPr")) {
+        cell.removeChild(node);
+      }
+    });
+    const imageParagraph = importWordFragment(
+      cell.ownerDocument,
+      wordImageParagraph(photo, relationshipId, drawingId, mediaName, {
+        maxWidth: 3.65,
+        maxHeight: 1.65
+      })
+    );
+    const caption = importWordFragment(
+      cell.ownerDocument,
+      wordParagraph(
+        `Figure ${figureNumber} - ${photo.caption || photo.name || "Inspection photo"}`,
+        "",
+        { center: true }
+      )
+    );
+    cell.appendChild(imageParagraph);
+    cell.appendChild(caption);
+  }
+
+  function setEmptyPhotoCell(table, rowIndex, cellIndex, figureNumber) {
+    const row = tableRows(table)[rowIndex];
+    const cell = row ? rowCells(row)[cellIndex] : null;
+    if (!cell) return;
+    Array.from(cell.childNodes).forEach((node) => {
+      if (!(node.nodeType === 1 && node.namespaceURI === WORD_NS && node.localName === "tcPr")) {
+        cell.removeChild(node);
+      }
+    });
+    cell.appendChild(
+      importWordFragment(
+        cell.ownerDocument,
+        wordParagraph(`Figure ${figureNumber} -`, "", { center: false })
+      )
+    );
+  }
+
+  function nextRelationshipId(relationshipsDocument) {
+    const used = Array.from(relationshipsDocument.getElementsByTagNameNS(REL_NS, "Relationship"))
+      .map((relationship) => String(relationship.getAttribute("Id") || ""))
+      .map((id) => Number(id.replace(/^rId/i, "")))
+      .filter(Number.isFinite);
+    return Math.max(0, ...used) + 1;
+  }
+
+  async function buildSAndBInspectionDocx(templateRecord, inspection, photos, outputFilename) {
+    if (!window.fflate) throw new Error("The Word document component is unavailable.");
+    const files = window.fflate.unzipSync(new Uint8Array(templateRecord.bytes));
+    validateInspectionReportTemplateBytes(new Uint8Array(templateRecord.bytes));
+
+    const documentXml = parseWordXml(files["word/document.xml"], "word/document.xml");
+    const headerXml = parseWordXml(files["word/header1.xml"], "word/header1.xml");
+    const footerXml = parseWordXml(files["word/footer1.xml"], "word/footer1.xml");
+    const relationshipsXml = parseWordXml(
+      files["word/_rels/document.xml.rels"],
+      "word/_rels/document.xml.rels"
+    );
+
+    const headerTable = wordElements(headerXml, "tbl")[0];
+    if (!headerTable) throw new Error("The S&B template header table is missing.");
+    setHeaderLabelValue(headerTable, 1, 0, "CLIENT:", inspection.customer || "");
+    setHeaderLabelValue(headerTable, 1, 1, "CLIENT PROJECT:", "");
+    setHeaderLabelValue(headerTable, 2, 0, "CLIENT PROJECT NUMBER:", inspection.projectNumber || "");
+    setHeaderLabelValue(headerTable, 2, 1, "CLIENT PO TO S&B INSPECTION:", "");
+    setHeaderLabelValue(headerTable, 3, 0, "CLIENT PO TO VENDOR:", inspection.purchaseOrderJob || "");
+    setHeaderLabelValue(headerTable, 3, 1, "S&B INSPECTION JOB:", "");
+    setHeaderLabelValue(headerTable, 4, 0, "REPORT NUMBER:", "");
+    setHeaderLabelValue(headerTable, 4, 1, "DATE OF REPORT:", displayDate(inspection.date));
+
+    const tables = wordElements(documentXml, "tbl");
+    const vendorTable = tables[0];
+    const photoTable = tables[2];
+    if (!vendorTable || !photoTable) throw new Error("The S&B template report tables are missing.");
+    const snapshot = inspection.tripSnapshot || {};
+    setWordCellText(vendorTable, 0, 1, inspection.vendor || "");
+    setWordCellText(vendorTable, 4, 1, inspection.purchaseOrderJob || "");
+    setWordCellText(vendorTable, 7, 1, displayDate(inspection.date));
+    setWordCellText(vendorTable, 8, 1, snapshot.staFileName || "");
+    setWordCellText(vendorTable, 7, 3, inspection.activity || "");
+    setWordCellText(vendorTable, 8, 3, inspection.equipmentTag || "");
+
+    const followUps = Array.isArray(inspection.followUps) ? inspection.followUps : [];
+    const actionItems = followUps.map((item) => {
+      const owner = item.responsibleParty ? ` — ${item.responsibleParty}` : "";
+      const due = item.dueDate ? `, due ${displayDate(item.dueDate)}` : "";
+      return `${item.action || "Follow-up"}${owner}${due} (${item.status || "Open"})`;
+    }).join("\n");
+    const inspectionAudit = [
+      inspection.observations || "",
+      inspection.deficiencies ? `Deficiencies / Exceptions: ${inspection.deficiencies}` : ""
+    ].filter(Boolean).join("\n");
+    setParagraphAfterLabel(documentXml, "DESCRIPTION:", inspection.summary || inspection.activity || "");
+    setParagraphAfterLabel(documentXml, "ACTION ITEMS:", actionItems);
+    setParagraphAfterLabel(documentXml, "INSPECTION/AUDIT:", inspectionAudit);
+    setLabeledParagraphValue(
+      documentXml,
+      "Shop Inspection:",
+      [inspection.activity, inspection.summary].filter(Boolean).join(" — ")
+    );
+    if (/NDE/i.test(inspection.inspectionType || "") || /NDE/i.test(inspection.activity || "")) {
+      setLabeledParagraphValue(documentXml, "NDE Review:", inspection.observations || inspection.summary || "Performed");
+    }
+    if (/COAT/i.test(inspection.inspectionType || "") || /COAT/i.test(inspection.activity || "")) {
+      setLabeledParagraphValue(documentXml, "Coating Inspection:", inspection.observations || inspection.summary || "Performed");
+    }
+    setLabeledParagraphValue(
+      documentXml,
+      "Inspection Release:",
+      [
+        inspection.acceptanceStatus || "",
+        inspection.deficiencies ? `Exceptions: ${inspection.deficiencies}` : ""
+      ].filter(Boolean).join(" — ")
+    );
+
+    const relationshipRoot = relationshipsXml.documentElement;
+    let relationshipNumber = nextRelationshipId(relationshipsXml);
+    const supportedPhotos = photos
+      .filter((photo) => ["png", "jpg", "jpeg"].includes(photoExtension(photo)))
+      .slice(0, 4);
+    for (let index = 0; index < supportedPhotos.length; index += 1) {
+      const photo = supportedPhotos[index];
+      const extension = photoExtension(photo) === "jpeg" ? "jpg" : photoExtension(photo);
+      const mediaName = `sb-inspection-photo-${index + 1}.${extension}`;
+      const relationshipId = `rId${relationshipNumber}`;
+      relationshipNumber += 1;
+      const relationship = relationshipsXml.createElementNS(REL_NS, "Relationship");
+      relationship.setAttribute("Id", relationshipId);
+      relationship.setAttribute(
+        "Type",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      );
+      relationship.setAttribute("Target", `media/${mediaName}`);
+      relationshipRoot.appendChild(relationship);
+      files[`word/media/${mediaName}`] = new Uint8Array(await photo.blob.arrayBuffer());
+      setPhotoCell(
+        photoTable,
+        Math.floor(index / 2),
+        index % 2,
+        photo,
+        relationshipId,
+        100 + index,
+        mediaName,
+        index + 1
+      );
+    }
+    for (let index = supportedPhotos.length; index < 4; index += 1) {
+      setEmptyPhotoCell(
+        photoTable,
+        Math.floor(index / 2),
+        index % 2,
+        index + 1
+      );
+    }
+
+    wordElements(footerXml, "t").forEach((textNode) => {
+      const text = String(textNode.textContent || "");
+      if (/\.docx/i.test(text)) textNode.textContent = outputFilename;
+    });
+
+    files["word/document.xml"] = serializeWordXml(documentXml);
+    files["word/header1.xml"] = serializeWordXml(headerXml);
+    files["word/footer1.xml"] = serializeWordXml(footerXml);
+    files["word/_rels/document.xml.rels"] = serializeWordXml(relationshipsXml);
+    return new Uint8Array(window.fflate.zipSync(files, { level: 6 }));
   }
 
   async function buildInspectionDocx(inspection, photos) {
@@ -1595,10 +2097,21 @@
       const csv = buildInspectionDataCsv(inspection, photos.length);
       const html = buildPhotoIndexHtml(inspection, photos);
       const pdf = await buildInspectionPdf(inspection, photos);
-      const docx = await buildInspectionDocx(inspection, photos);
+      const editableReportFilename = `${baseName}_Editable_Report.docx`;
+      const templateRecord = inspectionTemplateInstalled
+        ? await readInspectionReportTemplateRecord()
+        : null;
+      const docx = templateRecord?.bytes
+        ? await buildSAndBInspectionDocx(
+          templateRecord,
+          inspection,
+          photos,
+          editableReportFilename
+        )
+        : await buildInspectionDocx(inspection, photos);
       const entries = {
         [`${baseName}_Report.pdf`]: pdf,
-        [`${baseName}_Editable_Report.docx`]: docx,
+        [editableReportFilename]: docx,
         [`${baseName}_Update.txt`]: window.fflate.strToU8(updateText),
         [`${baseName}_Data.csv`]: window.fflate.strToU8(csv),
         [`${baseName}_Photo_Index.html`]: window.fflate.strToU8(html)
@@ -1710,6 +2223,19 @@
     $("inspectionListViewBtn")?.addEventListener("click", () => setActiveView("inspections"));
     $("followUpViewBtn")?.addEventListener("click", () => setActiveView("followups"));
     $("exportInspectionsBtn")?.addEventListener("click", exportInspectionCSV);
+    $("importInspectionTemplateBtn")?.addEventListener("click", () => {
+      $("inspectionTemplateFileInput")?.click();
+    });
+    $("removeInspectionTemplateBtn")?.addEventListener("click", async () => {
+      if (!window.confirm("Remove the privately stored S&B Word report template from this device? Inspection records and photos will not be deleted.")) return;
+      try {
+        await deleteInspectionReportTemplateRecord();
+        await refreshInspectionReportTemplateStatus();
+        showInspectionToast("Private S&B Word template removed.");
+      } catch (error) {
+        window.alert(`The private S&B Word template could not be removed.\n\n${error.message}`);
+      }
+    });
     $("inspectionSearch")?.addEventListener("input", () => renderInspectionList(readState()));
     $("clearInspectionSearch")?.addEventListener("click", () => {
       $("inspectionSearch").value = "";
@@ -1868,6 +2394,32 @@
     });
 
     document.addEventListener("change", (event) => {
+      if (event.target.id === "inspectionTemplateFileInput") {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+        const status = $("inspectionTemplateStatus");
+        const importButton = $("importInspectionTemplateBtn");
+        if (importButton) importButton.disabled = true;
+        if (status) {
+          status.textContent = "Validating and storing the S&B Word template privately on this device…";
+          status.className = "private-master-status";
+        }
+        importInspectionReportTemplate(file)
+          .then(async () => {
+            await refreshInspectionReportTemplateStatus();
+            showInspectionToast("Private S&B Word template installed.");
+          })
+          .catch(async (error) => {
+            console.error("S&B Word template import failed:", error);
+            window.alert(`The S&B Word template could not be imported.\n\n${error.message}`);
+            await refreshInspectionReportTemplateStatus();
+          })
+          .finally(() => {
+            if (importButton) importButton.disabled = false;
+          });
+        return;
+      }
       if (event.target.id === "takeInspectionPhotoInput" || event.target.id === "chooseInspectionPhotosInput") {
         addInspectionPhotos(event.target.files);
         event.target.value = "";
@@ -1915,6 +2467,7 @@
       promptForTrip: promptForCompletedTrip
     };
     refreshFromState(true);
+    refreshInspectionReportTemplateStatus();
 
     const action = new URLSearchParams(window.location.search).get("action");
     if (action === "inspection" || action === "inspections") {

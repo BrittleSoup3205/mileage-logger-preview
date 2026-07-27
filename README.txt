@@ -66,6 +66,14 @@ The computer-friendly ZIP contains:
 
 Inspection packages are for reporting and recordkeeping. They do not replace the required full restore backup.
 
+PRIVATE S&B WORD REPORT TEMPLATE
+--------------------------------
+Open Inspections and use Import S&B Word Template.
+Choose the approved blank S&B inspection report in .docx format.
+The template is stored only in this browser on this device and is not uploaded to GitHub or included in backups.
+When installed, Export Package uses the S&B layout for the editable Word report and inserts available inspection data plus up to four attached photos.
+Keep the original blank S&B template safely in Files because clearing website data or removing the web app can remove the private imported copy.
+
 TRIP LOG CORRECTIONS
 --------------------
 Open View Log and tap Edit beside a saved trip. Customer, vendor, project, purpose, date, times, odometers, and notes can be corrected.
