@@ -9,6 +9,8 @@ Use test information only.
 3. Save the inspection.
 4. In **Inspection History**, tap **Export Package**.
 5. Save the ZIP to Files.
+   - On iPhone, the saved item must end in `.zip`.
+   - If Files shows a `.txt` file instead, close and reopen the preview so the latest app version loads.
 6. Move or open the ZIP on a computer and extract it.
 7. Confirm the package contains:
    - a PDF report;

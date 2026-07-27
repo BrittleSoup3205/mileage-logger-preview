@@ -1322,11 +1322,9 @@
     const touchDevice = navigator.maxTouchPoints > 0 || window.matchMedia?.("(pointer: coarse)")?.matches;
     if (touchDevice && navigator.share && navigator.canShare?.({ files: [file] })) {
       try {
-        await navigator.share({
-          title: "Mileage Logger Inspection Package",
-          text: "Save this inspection package to Files or share it to your computer.",
-          files: [file]
-        });
+        // Share only the file. On iOS, including a text message alongside a ZIP
+        // can cause Save to Files to save the message as a .txt file instead.
+        await navigator.share({ files: [file] });
         showInspectionToast("Inspection package shared.");
         return;
       } catch (error) {
