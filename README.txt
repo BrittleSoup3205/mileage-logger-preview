@@ -58,6 +58,7 @@ INSPECTION PACKAGES
 Open Inspection History and tap Export Package on an inspection record.
 The computer-friendly ZIP contains:
 - A printable PDF inspection report
+- An editable Word inspection report
 - A plain-text inspection update
 - An Excel-readable CSV data file
 - An HTML photo index

@@ -1136,6 +1136,237 @@
 </html>`;
   }
 
+  function xmlEscape(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  function wordParagraph(text, style = "", options = {}) {
+    const paragraphProperties = [
+      style ? `<w:pStyle w:val="${style}"/>` : "",
+      options.center ? '<w:jc w:val="center"/>' : "",
+      options.pageBreakBefore ? '<w:pageBreakBefore/>' : "",
+      options.keepNext ? '<w:keepNext/>' : ""
+    ].filter(Boolean).join("");
+    const lines = String(text ?? "").split(/\r?\n/);
+    const runs = lines.map((line, index) => {
+      const breakTag = index ? '<w:br/>' : "";
+      return `<w:r>${options.bold ? "<w:rPr><w:b/></w:rPr>" : ""}${breakTag}<w:t xml:space="preserve">${xmlEscape(line || " ")}</w:t></w:r>`;
+    }).join("");
+    return `<w:p>${paragraphProperties ? `<w:pPr>${paragraphProperties}</w:pPr>` : ""}${runs}</w:p>`;
+  }
+
+  function wordTable(rows, widths, headerRows = 0) {
+    const totalWidth = widths.reduce((sum, width) => sum + width, 0);
+    const grid = widths.map((width) => `<w:gridCol w:w="${width}"/>`).join("");
+    const tableRows = rows.map((row, rowIndex) => {
+      const cells = row.map((value, cellIndex) => {
+        const fill = rowIndex < headerRows || (widths.length === 4 && cellIndex % 2 === 0) ? "F2F4F7" : "";
+        const bold = rowIndex < headerRows || (widths.length === 4 && cellIndex % 2 === 0);
+        return `<w:tc><w:tcPr><w:tcW w:w="${widths[cellIndex]}" w:type="dxa"/>${fill ? `<w:shd w:fill="${fill}"/>` : ""}<w:vAlign w:val="center"/></w:tcPr>${wordParagraph(value || " ", "", { bold })}</w:tc>`;
+      }).join("");
+      return `<w:tr>${rowIndex < headerRows ? "<w:trPr><w:tblHeader/></w:trPr>" : ""}${cells}</w:tr>`;
+    }).join("");
+    return `<w:tbl>
+      <w:tblPr>
+        <w:tblW w:w="${totalWidth}" w:type="dxa"/>
+        <w:tblInd w:w="120" w:type="dxa"/>
+        <w:tblLayout w:type="fixed"/>
+        <w:tblCellMar><w:top w:w="80" w:type="dxa"/><w:left w:w="120" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tblCellMar>
+        <w:tblBorders>
+          <w:top w:val="single" w:sz="4" w:color="D9E0E8"/>
+          <w:left w:val="single" w:sz="4" w:color="D9E0E8"/>
+          <w:bottom w:val="single" w:sz="4" w:color="D9E0E8"/>
+          <w:right w:val="single" w:sz="4" w:color="D9E0E8"/>
+          <w:insideH w:val="single" w:sz="4" w:color="D9E0E8"/>
+          <w:insideV w:val="single" w:sz="4" w:color="D9E0E8"/>
+        </w:tblBorders>
+      </w:tblPr>
+      <w:tblGrid>${grid}</w:tblGrid>
+      ${tableRows}
+    </w:tbl>`;
+  }
+
+  function wordImageParagraph(photo, relationshipId, drawingId, mediaName) {
+    const maxWidth = 6.2;
+    const maxHeight = 7.0;
+    const sourceWidth = Number(photo.width) || 1200;
+    const sourceHeight = Number(photo.height) || 900;
+    const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
+    const width = Math.max(1, sourceWidth * scale);
+    const height = Math.max(1, sourceHeight * scale);
+    const cx = Math.round(width * 914400);
+    const cy = Math.round(height * 914400);
+    const description = xmlEscape(photo.caption || photo.name || `Inspection photo ${drawingId}`);
+    return `<w:p>
+      <w:pPr><w:jc w:val="center"/></w:pPr>
+      <w:r><w:drawing>
+        <wp:inline distT="0" distB="0" distL="0" distR="0">
+          <wp:extent cx="${cx}" cy="${cy}"/>
+          <wp:docPr id="${drawingId}" name="${xmlEscape(mediaName)}" descr="${description}"/>
+          <wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+              <pic:pic>
+                <pic:nvPicPr><pic:cNvPr id="0" name="${xmlEscape(mediaName)}" descr="${description}"/><pic:cNvPicPr/></pic:nvPicPr>
+                <pic:blipFill><a:blip r:embed="${relationshipId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+                <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+              </pic:pic>
+            </a:graphicData>
+          </a:graphic>
+        </wp:inline>
+      </w:drawing></w:r>
+    </w:p>`;
+  }
+
+  async function buildInspectionDocx(inspection, photos) {
+    if (!window.fflate) throw new Error("The Word document component is unavailable.");
+    const snapshot = inspection.tripSnapshot || {};
+    const now = new Date().toISOString();
+    const metadata = [
+      ["Date", displayDate(inspection.date), "Customer", inspection.customer || "Not entered"],
+      ["Vendor / Facility", inspection.vendor || "Not entered", "Project Number", inspection.projectNumber || "Not entered"],
+      ["PO / Vendor Job", inspection.purchaseOrderJob || "Not entered", "Equipment Tag", inspection.equipmentTag || "Not entered"],
+      ["Inspection Type", inspection.inspectionType || "Inspection", "Activity", inspection.activity || "Not entered"],
+      ["Status", inspection.status || "Not entered", "Acceptance / Release", inspection.acceptanceStatus || "Not Determined"],
+      ["Start Time", inspection.startTime || "Not entered", "End Time", inspection.endTime || "Not entered"],
+      ["Hours On Site", inspection.hoursOnSite || "Not entered", "Attached Photos", String(photos.length)],
+      ["Mileage", snapshot.miles === undefined || snapshot.miles === null ? "Standalone inspection" : `${Number(snapshot.miles).toFixed(1)} miles`, "GPS Route Miles", snapshot.gpsRouteMiles === undefined || snapshot.gpsRouteMiles === null ? "Not recorded" : Number(snapshot.gpsRouteMiles).toFixed(1)],
+      ["STA Generated", snapshot.staGenerated ? "Yes" : "No", "STA Filename", snapshot.staFileName || "Not recorded"]
+    ];
+    const followUps = inspection.followUps || [];
+    const followUpRows = [
+      ["Action", "Responsible Party", "Due Date", "Status"],
+      ...followUps.map((item) => [
+        item.action || "Follow-up",
+        item.responsibleParty || "Not assigned",
+        item.dueDate ? displayDate(item.dueDate) : "Not entered",
+        item.status || "Open"
+      ])
+    ];
+
+    const embeddedPhotos = photos.filter((photo) => ["png", "jpg", "jpeg"].includes(photoExtension(photo)));
+    const imageRelationships = [];
+    const mediaEntries = {};
+    embeddedPhotos.forEach((photo, index) => {
+      const extension = photoExtension(photo) === "jpeg" ? "jpg" : photoExtension(photo);
+      const mediaName = `inspection-photo-${index + 1}.${extension}`;
+      const relationshipId = `rId${5 + index}`;
+      imageRelationships.push({ photo, relationshipId, mediaName, extension });
+    });
+    for (const item of imageRelationships) {
+      mediaEntries[`word/media/${item.mediaName}`] = new Uint8Array(await item.photo.blob.arrayBuffer());
+    }
+
+    const photoBody = photos.length
+      ? photos.map((photo, index) => {
+        const embedded = imageRelationships.find((item) => item.photo === photo);
+        const caption = photo.caption || photo.name || `Inspection photo ${index + 1}`;
+        const photoHeading = index === 0
+          ? `Inspection Photos - Photo 1 of ${photos.length}`
+          : `Photo ${index + 1} of ${photos.length}`;
+        return [
+          wordParagraph(photoHeading, "Heading1", { pageBreakBefore: true, keepNext: true }),
+          wordParagraph(caption, "Caption", { center: true }),
+          embedded
+            ? wordImageParagraph(photo, embedded.relationshipId, index + 1, embedded.mediaName)
+            : wordParagraph("This image remains in the package's Photos folder but cannot be embedded in this Word version.", "", { center: true }),
+          wordParagraph(`File: ${photo.packagePath}`, "Caption", { center: true })
+        ].join("");
+      }).join("")
+      : "";
+
+    const body = [
+      wordParagraph("INSPECTION REPORT", "Title"),
+      wordParagraph(`${inspection.vendor || "Facility"}${inspection.projectNumber ? ` | ${inspection.projectNumber}` : ""}`, "Subtitle"),
+      wordTable(metadata, [1500, 3180, 1500, 3180]),
+      wordParagraph("Summary", "Heading1", { keepNext: true }),
+      wordParagraph(inspection.summary || "No summary entered."),
+      wordParagraph("Observations", "Heading1", { keepNext: true }),
+      wordParagraph(inspection.observations || "No observations entered."),
+      wordParagraph("Deficiencies / Exceptions", "Heading1", { keepNext: true }),
+      wordParagraph(inspection.deficiencies || "None entered."),
+      followUps.length ? wordParagraph("Follow-up Actions", "Heading1", { keepNext: true }) : "",
+      followUps.length ? wordTable(followUpRows, [4200, 1900, 1400, 1860], 1) : "",
+      photoBody
+    ].join("");
+
+    const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:body>${body}
+    <w:sectPr>
+      <w:headerReference w:type="default" r:id="rId3"/>
+      <w:footerReference w:type="default" r:id="rId4"/>
+      <w:pgSz w:w="12240" w:h="15840"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>
+      <w:cols w:space="720"/>
+    </w:sectPr>
+  </w:body>
+</w:document>`;
+
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:color w:val="172033"/></w:rPr></w:rPrDefault>
+    <w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="264" w:lineRule="auto"/></w:pPr></w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="120" w:line="264" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Subtitle"/><w:qFormat/><w:pPr><w:spacing w:before="0" w:after="80"/><w:keepNext/></w:pPr><w:rPr><w:b/><w:color w:val="0B2545"/><w:sz w:val="46"/><w:szCs w:val="46"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="240"/><w:keepNext/></w:pPr><w:rPr><w:color w:val="566573"/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="320" w:after="160"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:color w:val="2E74B5"/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:color w:val="2E74B5"/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="160" w:after="80"/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:color w:val="1F4D78"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="Caption"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:before="80" w:after="80"/></w:pPr><w:rPr><w:i/><w:color w:val="566573"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style>
+</w:styles>`;
+
+    const documentRelationships = [
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>',
+      '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>',
+      '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>',
+      '<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>',
+      ...imageRelationships.map((item) => `<Relationship Id="${item.relationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${item.mediaName}"/>`)
+    ].join("");
+
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Default Extension="jpg" ContentType="image/jpeg"/>
+  <Default Extension="jpeg" ContentType="image/jpeg"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`;
+
+    const entries = {
+      "[Content_Types].xml": window.fflate.strToU8(contentTypes),
+      "_rels/.rels": window.fflate.strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`),
+      "docProps/core.xml": window.fflate.strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xmlEscape(packageBaseName(inspection))} Editable Inspection Report</dc:title><dc:creator>Mileage Logger</dc:creator><cp:lastModifiedBy>Mileage Logger</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`),
+      "docProps/app.xml": window.fflate.strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Mileage Logger</Application><AppVersion>1.0</AppVersion></Properties>`),
+      "word/document.xml": window.fflate.strToU8(documentXml),
+      "word/styles.xml": window.fflate.strToU8(stylesXml),
+      "word/settings.xml": window.fflate.strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:zoom w:percent="100"/><w:updateFields w:val="true"/></w:settings>`),
+      "word/header1.xml": window.fflate.strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="D9E0E8"/></w:pBdr></w:pPr><w:r><w:rPr><w:color w:val="566573"/><w:sz w:val="18"/></w:rPr><w:t>Mileage Logger | Editable Inspection Report</w:t></w:r></w:p></w:hdr>`),
+      "word/footer1.xml": window.fflate.strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:color w:val="777777"/><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:rPr><w:color w:val="777777"/><w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple></w:p></w:ftr>`),
+      "word/_rels/document.xml.rels": window.fflate.strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${documentRelationships}</Relationships>`),
+      ...mediaEntries
+    };
+    return new Uint8Array(window.fflate.zipSync(entries, { level: 6 }));
+  }
+
   function pdfSafeText(value) {
     return String(value ?? "")
       .normalize("NFKD")
@@ -1364,8 +1595,10 @@
       const csv = buildInspectionDataCsv(inspection, photos.length);
       const html = buildPhotoIndexHtml(inspection, photos);
       const pdf = await buildInspectionPdf(inspection, photos);
+      const docx = await buildInspectionDocx(inspection, photos);
       const entries = {
         [`${baseName}_Report.pdf`]: pdf,
+        [`${baseName}_Editable_Report.docx`]: docx,
         [`${baseName}_Update.txt`]: window.fflate.strToU8(updateText),
         [`${baseName}_Data.csv`]: window.fflate.strToU8(csv),
         [`${baseName}_Photo_Index.html`]: window.fflate.strToU8(html)

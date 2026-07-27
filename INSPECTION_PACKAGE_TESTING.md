@@ -14,14 +14,16 @@ Use test information only.
 6. Move or open the ZIP on a computer and extract it.
 7. Confirm the package contains:
    - a PDF report;
+   - an editable Word report;
    - an inspection update text file;
    - an inspection data CSV file;
    - an HTML photo index; and
    - a `Photos` folder.
 8. Confirm the PDF opens, includes the inspection information, and shows the attached photos.
-9. Confirm the HTML photo index opens in a browser and shows each captioned photo.
-10. Confirm the CSV opens in Excel and the text update opens in Notepad.
-11. Confirm the photos use normal image extensions and open individually.
+9. Confirm the Word report opens, can be edited, and shows the same inspection information and photos.
+10. Confirm the HTML photo index opens in a browser and shows each captioned photo.
+11. Confirm the CSV opens in Excel and the text update opens in Notepad.
+12. Confirm the photos use normal image extensions and open individually.
 
 ## Full restore backup
 
