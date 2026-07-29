@@ -167,6 +167,18 @@
     }
   }
 
+  async function getPhotosByOwner(ownerId) {
+    if (!ownerId) return [];
+    const database = await openDatabase();
+    try {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      const index = transaction.objectStore(STORE_NAME).index("inspectionId");
+      return await requestResult(index.getAll(IDBKeyRange.only(ownerId)));
+    } finally {
+      database.close();
+    }
+  }
+
   async function deletePhoto(id) {
     await withStore("readwrite", (store) => store.delete(id));
   }
@@ -212,6 +224,7 @@
     addPhoto,
     getPhoto,
     getAllPhotos,
+    getPhotosByOwner,
     deletePhoto,
     deleteInspectionPhotos,
     replaceAllPhotos

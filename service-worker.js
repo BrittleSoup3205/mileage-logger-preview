@@ -1,11 +1,11 @@
-const CACHE_NAME = "mileage-logger-active-trip-photos-v26";
+const CACHE_NAME = "mileage-logger-trip-photo-records-v27";
 const APP_FILES = [
   "./",
   "./index.html",
   "./styles.css",
-  "./app.js?v=active-trip-photos-1",
-  "./inspections.js?v=active-trip-photos-1",
-  "./media-store.js?v=active-trip-photos-1",
+  "./app.js?v=active-trip-photos-2",
+  "./inspections.js?v=active-trip-photos-2",
+  "./media-store.js?v=active-trip-photos-2",
   "./vendor/pdf-lib.min.js",
   "./vendor/fflate.min.js",
   "./manifest.webmanifest",

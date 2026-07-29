@@ -805,6 +805,38 @@
     }
   }
 
+  async function recoverLinkedTripPhotos(trip) {
+    if (!trip?.id || !window.MileageMediaStore?.getPhotosByOwner) return;
+    try {
+      const stored = await window.MileageMediaStore.getPhotosByOwner(trip.id);
+      const knownIds = new Set(currentPhotos.map((photo) => photo.id));
+      const recovered = stored
+        .filter((photo) => !knownIds.has(photo.id))
+        .map((photo) => ({
+          id: photo.id,
+          name: photo.name || "Trip photo",
+          type: photo.type || "image/jpeg",
+          size: Number(photo.size || 0),
+          width: Number(photo.width || 0),
+          height: Number(photo.height || 0),
+          createdISO: photo.createdISO || "",
+          caption: photo.caption || "",
+          sourceTripId: trip.id
+        }));
+      if (!recovered.length || currentTripId !== trip.id) return;
+      currentPhotos.push(...recovered);
+      recovered.forEach((photo) => originalPhotoIds.add(photo.id));
+      await renderPhotoEditors();
+      const status = $("inspectionPhotoStatus");
+      if (status) {
+        status.textContent = `${currentPhotos.length} trip photo${currentPhotos.length === 1 ? "" : "s"} attached to this inspection record.`;
+        status.className = "gps-status good";
+      }
+    } catch (error) {
+      console.warn("Could not recover linked trip photos:", error);
+    }
+  }
+
   function openInspectionForm(inspection = null, tripId = "") {
     const state = readState();
     editingInspectionWasExisting = Boolean(inspection);
@@ -915,6 +947,7 @@
     populateProjectDatalist(state);
     renderFollowUpEditors(Array.isArray(values.followUps) ? values.followUps : []);
     renderPhotoEditors();
+    recoverLinkedTripPhotos(trip);
     renderSelectedTripSummary(snapshot);
     panel.scrollIntoView({ behavior: "auto", block: "start" });
   }
@@ -2433,8 +2466,9 @@
         return;
       }
       if (event.target.id === "takeInspectionPhotoInput" || event.target.id === "chooseInspectionPhotosInput") {
-        addInspectionPhotos(event.target.files);
+        const files = [...(event.target.files || [])];
         event.target.value = "";
+        addInspectionPhotos(files);
       }
       if (event.target.id === "inspectionTripId") {
         applyTripToOpenForm(event.target.value);

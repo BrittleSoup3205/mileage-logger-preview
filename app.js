@@ -52,6 +52,7 @@
   let staContextTripId = null;
   let staMasterBytesPromise = null;
   let activeTripPhotoObjectUrls = [];
+  let tripLogPhotoObjectUrls = [];
 
   function defaultState() {
     return {
@@ -328,6 +329,40 @@
     return `${Number(location.latitude).toFixed(6)}, ${Number(location.longitude).toFixed(6)} • accuracy ±${Number.isFinite(accuracy) ? Math.round(accuracy) : "?"} m`;
   }
 
+  function storedPhotoMetadata(photo) {
+    return {
+      id: photo.id,
+      name: photo.name || "Trip photo",
+      type: photo.type || "image/jpeg",
+      size: Number(photo.size || 0),
+      width: Number(photo.width || 0),
+      height: Number(photo.height || 0),
+      createdISO: photo.createdISO || "",
+      caption: photo.caption || ""
+    };
+  }
+
+  async function reconcileTripPhotos(trip) {
+    if (!trip?.id || !window.MileageMediaStore?.getPhotosByOwner) {
+      return Array.isArray(trip?.photos) ? trip.photos : [];
+    }
+    const recorded = Array.isArray(trip.photos) ? trip.photos : [];
+    const byId = new Map(recorded.map((photo) => [photo.id, photo]));
+    const stored = await window.MileageMediaStore.getPhotosByOwner(trip.id);
+    let changed = false;
+    for (const photo of stored) {
+      if (byId.has(photo.id)) continue;
+      recorded.push(storedPhotoMetadata(photo));
+      byId.set(photo.id, photo);
+      changed = true;
+    }
+    if (changed || !Array.isArray(trip.photos)) {
+      trip.photos = recorded;
+      saveState();
+    }
+    return recorded;
+  }
+
   async function renderActiveTripPhotoGallery() {
     const list = $("activeTripPhotoList");
     const count = $("activeTripPhotoCount");
@@ -336,7 +371,13 @@
     activeTripPhotoObjectUrls = [];
     if (!list || !count || !trip) return;
 
-    const photos = Array.isArray(trip.photos) ? trip.photos : [];
+    let photos = Array.isArray(trip.photos) ? trip.photos : [];
+    try {
+      photos = await reconcileTripPhotos(trip);
+    } catch (error) {
+      console.warn("Could not verify active-trip photo attachments:", error);
+    }
+    if (state.activeTrip?.id !== trip.id) return;
     count.textContent = String(photos.length);
     if (!photos.length) {
       list.innerHTML = `<div class="active-trip-photo-empty">No photos added to this trip yet.</div>`;
@@ -901,6 +942,11 @@
         </td>
         <td>${escapeHTML(trip.notes || "")}</td>
         <td>
+          ${(trip.photos || []).length
+            ? `<button class="button button-secondary button-small" type="button" data-open-trip-photos="${escapeHTML(trip.id)}">View ${(trip.photos || []).length}</button>`
+            : "0"}
+        </td>
+        <td>
           <div class="trip-row-actions">
             <button class="button button-secondary button-small" type="button" data-edit-trip="${escapeHTML(trip.id)}">Edit</button>
             <button class="button button-danger-outline button-small" type="button" data-delete-trip="${escapeHTML(trip.id)}">Delete</button>
@@ -912,6 +958,62 @@
 
     $("emptyLog").classList.toggle("hidden", filtered.length !== 0);
     $("tripTable").classList.toggle("hidden", filtered.length === 0);
+  }
+
+  function closeTripPhotoPanel() {
+    tripLogPhotoObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+    tripLogPhotoObjectUrls = [];
+    $("tripPhotoPanel")?.classList.add("hidden");
+    if ($("tripPhotoGallery")) $("tripPhotoGallery").innerHTML = "";
+  }
+
+  async function openTripPhotoPanel(tripId) {
+    const trip = state.trips.find((item) => item.id === tripId);
+    if (!trip) return;
+    const panel = $("tripPhotoPanel");
+    const gallery = $("tripPhotoGallery");
+    const status = $("tripPhotoPanelStatus");
+    if (!panel || !gallery || !status) return;
+
+    closeTripPhotoPanel();
+    panel.classList.remove("hidden");
+    $("tripPhotoPanelTitle").textContent = `Trip Photos — ${trip.vendor || trip.date || "Saved Trip"}`;
+    status.textContent = "Loading saved photos…";
+    gallery.innerHTML = "";
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    try {
+      const photos = await reconcileTripPhotos(trip);
+      if (!photos.length) {
+        status.textContent = "No photos are attached to this trip.";
+        return;
+      }
+      status.textContent = `${photos.length} photo${photos.length === 1 ? "" : "s"} saved with this trip and included in the full ZIP backup.`;
+      const cards = await Promise.all(photos.map(async (metadata) => {
+        const stored = await window.MileageMediaStore?.getPhoto(metadata.id);
+        if (!stored?.blob) {
+          return `<article><div class="trip-photo-caption"><strong>${escapeHTML(metadata.caption || metadata.name || "Trip photo")}</strong><small>Photo file is unavailable on this device. Restore the latest full ZIP backup.</small></div></article>`;
+        }
+        const url = URL.createObjectURL(stored.blob);
+        tripLogPhotoObjectUrls.push(url);
+        return `
+          <article>
+            <button type="button" data-view-saved-trip-photo="${escapeHTML(url)}" aria-label="Open saved trip photo">
+              <img src="${escapeHTML(url)}" alt="${escapeHTML(metadata.caption || metadata.name || "Trip photo")}">
+            </button>
+            <div class="trip-photo-caption">
+              <strong>${escapeHTML(metadata.caption || metadata.name || "Trip photo")}</strong>
+              <small>${escapeHTML(metadata.name || "")}</small>
+            </div>
+          </article>
+        `;
+      }));
+      gallery.innerHTML = cards.join("");
+      renderLog();
+    } catch (error) {
+      status.textContent = `The saved photos could not be loaded: ${error.message}`;
+      window.alert(`The trip photos could not be opened.\n\n${error.message}`);
+    }
   }
 
   function tripDateToInspectionDate(value) {
@@ -2113,7 +2215,7 @@ ${fallbackError.message || error.message}`);
 
   $("activeDetails").addEventListener("change", (event) => {
     if (event.target.id !== "activeTripTakePhotoInput" && event.target.id !== "activeTripChoosePhotosInput") return;
-    const files = event.target.files;
+    const files = [...(event.target.files || [])];
     event.target.value = "";
     addActiveTripPhotos(files);
   });
@@ -2147,6 +2249,17 @@ ${fallbackError.message || error.message}`);
   $("tripTable").addEventListener("click", (event) => {
     const button = event.target.closest("[data-edit-trip]");
     if (button) openTripEditor(button.dataset.editTrip);
+  });
+
+  $("tripTable").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-open-trip-photos]");
+    if (button) openTripPhotoPanel(button.dataset.openTripPhotos);
+  });
+
+  $("closeTripPhotoPanelBtn").addEventListener("click", closeTripPhotoPanel);
+  $("tripPhotoGallery").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-view-saved-trip-photo]");
+    if (button) window.open(button.dataset.viewSavedTripPhoto, "_blank", "noopener");
   });
 
   $("tripTable").addEventListener("click", (event) => {

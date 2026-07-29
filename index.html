@@ -321,6 +321,18 @@
         </form>
       </div>
 
+      <div id="tripPhotoPanel" class="trip-edit-panel hidden">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">Saved trip attachments</p>
+            <h3 id="tripPhotoPanelTitle">Trip Photos</h3>
+          </div>
+          <button id="closeTripPhotoPanelBtn" class="button button-quiet button-small" type="button">Close</button>
+        </div>
+        <p id="tripPhotoPanelStatus" class="muted"></p>
+        <div id="tripPhotoGallery" class="trip-photo-gallery"></div>
+      </div>
+
       <div id="emptyLog" class="empty-state hidden">No completed trips have been saved yet.</div>
 
       <div class="table-wrap">
@@ -342,6 +354,7 @@
               <th>STA</th>
               <th>Maps</th>
               <th>Notes</th>
+              <th>Photos</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -491,9 +504,9 @@
 
   <script src="./vendor/pdf-lib.min.js"></script>
   <script src="./vendor/fflate.min.js"></script>
-  <script src="./media-store.js?v=active-trip-photos-1"></script>
-  <script src="./app.js?v=active-trip-photos-1"></script>
-  <script src="./inspections.js?v=active-trip-photos-1"></script>
+  <script src="./media-store.js?v=active-trip-photos-2"></script>
+  <script src="./app.js?v=active-trip-photos-2"></script>
+  <script src="./inspections.js?v=active-trip-photos-2"></script>
 </body>
 </html>
 
