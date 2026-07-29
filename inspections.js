@@ -454,6 +454,8 @@
       .inspection-metric strong { display: block; margin-top: 4px; font-size: 1.3rem; }
       .inspection-toolbar { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 13px; }
       .inspection-toolbar .active-view { outline: 3px solid color-mix(in srgb, var(--info), transparent 65%); }
+      .inspection-handoff-note { display: grid; gap: 3px; margin: -2px 0 14px; padding: 11px 13px; border-left: 4px solid var(--info); border-radius: 9px; color: var(--muted); background: color-mix(in srgb, var(--info), transparent 94%); }
+      .inspection-handoff-note strong { color: var(--text); }
       .inspection-backup-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; padding: 12px; border: 1px solid var(--warning); border-radius: 12px; color: var(--warning); background: color-mix(in srgb, var(--warning), transparent 94%); }
       .inspection-backup-notice.current { color: var(--success); border-color: var(--success); background: color-mix(in srgb, var(--success), transparent 94%); }
       .inspection-template-panel { margin: 12px 0 15px; padding: 13px; border: 1px solid var(--line); border-radius: 13px; background: color-mix(in srgb, var(--card), var(--bg) 28%); }
@@ -579,7 +581,7 @@
             <input id="inspectionTemplateFileInput" class="hidden" type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx">
           </div>
           <p class="privacy-note compact-note">
-            The S&B template is not uploaded to GitHub or included in backups. When installed, Export Package uses it for the editable Word report.
+            The S&B template is not uploaded to GitHub or included in backups. When installed, Send to Inspection Notes uses it for the editable Word report.
           </p>
         </section>
 
@@ -588,6 +590,10 @@
           <button id="inspectionListViewBtn" class="button button-secondary active-view" type="button">Inspection History</button>
           <button id="followUpViewBtn" class="button button-secondary" type="button">Open Follow-ups</button>
           <button id="exportInspectionsBtn" class="button button-secondary" type="button">Export Inspection CSV</button>
+        </div>
+        <div class="inspection-handoff-note">
+          <strong>Sending a record to Summarize Inspection Notes</strong>
+          <span>Use <em>Send to Inspection Notes</em> on an inspection, then save the ZIP in OneDrive &gt; Inspection Handoffs.</span>
         </div>
 
         <div id="inspectionFormPanel" class="inspection-form-panel hidden"></div>
@@ -1162,7 +1168,7 @@
 
           <div class="inspection-record-actions">
             <button class="button button-secondary button-small" type="button" data-edit-inspection="${escapeHTML(inspection.id)}">Edit</button>
-            <button class="button inspection-button button-small" type="button" data-export-inspection="${escapeHTML(inspection.id)}">Export Package</button>
+            <button class="button inspection-button button-small" type="button" data-export-inspection="${escapeHTML(inspection.id)}">Send to Inspection Notes</button>
             ${snapshot?.startLocation ? `<a class="button button-secondary button-small" href="${mapLink(snapshot.startLocation, "Trip Start")}" target="_blank" rel="noopener">Start Map</a>` : ""}
             ${snapshot?.endLocation ? `<a class="button button-secondary button-small" href="${mapLink(snapshot.endLocation, "Trip End")}" target="_blank" rel="noopener">End Map</a>` : ""}
             <button class="button button-danger-outline button-small" type="button" data-delete-inspection="${escapeHTML(inspection.id)}">Delete</button>
@@ -1332,6 +1338,143 @@
       formatDateTime(inspection.createdISO), formatDateTime(inspection.modifiedISO)
     ];
     return [header, row].map((values) => values.map(csvEscape).join(",")).join("\r\n");
+  }
+
+  function handoffRecordKey(inspection) {
+    return [
+      inspection.projectNumber || "No Project",
+      inspection.date || todayInputValue(),
+      inspection.vendor || "No Vendor"
+    ].join(" | ");
+  }
+
+  function photoExtractedText(photo) {
+    return String(
+      photo.extractedText
+      || photo.ocrText
+      || photo.transcript
+      || photo.handwrittenText
+      || ""
+    ).trim();
+  }
+
+  function buildPhotoTextFile(inspection, photos) {
+    const lines = [
+      "PHOTO NOTES AND EXTRACTED TEXT",
+      "",
+      `Record key: ${handoffRecordKey(inspection)}`,
+      ""
+    ];
+    if (!photos.length) {
+      lines.push("No photos were attached to this inspection.");
+      return lines.join("\r\n");
+    }
+    photos.forEach((photo, index) => {
+      const extractedText = photoExtractedText(photo);
+      lines.push(
+        `PHOTO ${index + 1}`,
+        `File: ${photo.packagePath}`,
+        `Caption: ${photo.caption || "No caption entered."}`,
+        "Extracted handwritten text:",
+        extractedText || "No extracted text is stored yet. Review the original photo when summarizing.",
+        ""
+      );
+    });
+    return lines.join("\r\n");
+  }
+
+  function buildHandoffReadme(inspection, baseName) {
+    return [
+      "MILEAGE LOGGER INSPECTION HANDOFF",
+      "",
+      `Record key: ${handoffRecordKey(inspection)}`,
+      "",
+      "Purpose",
+      "This package combines the Mileage Logger trip and inspection record for use with Summarize Inspection Notes.",
+      "",
+      "How to use",
+      "1. Save this complete ZIP in OneDrive > Inspection Handoffs.",
+      "2. Give the complete ZIP to the Summarize Inspection Notes work folder.",
+      "3. Match other notes and transcripts using the project number, inspection date, and vendor.",
+      "4. Keep the original ZIP as the source record.",
+      "",
+      "Important files",
+      `${baseName}_Handoff.json - structured record for reliable merging`,
+      `${baseName}_Editable_Report.docx - editable inspection report`,
+      `${baseName}_Update.txt - readable inspection update`,
+      `${baseName}_Photo_Text.txt - captions and any stored extracted text`,
+      "Photos folder - original photo files",
+      "",
+      `Created: ${new Date().toLocaleString()}`
+    ].join("\r\n");
+  }
+
+  function buildInspectionHandoffJson(inspection, photos) {
+    const state = readState();
+    const linkedTrip = getTripById(state, inspection.tripId);
+    const snapshot = inspection.tripSnapshot || null;
+    const photoRecords = photos.map((photo) => ({
+      id: photo.id || "",
+      filename: photo.packagePath,
+      originalName: photo.name || "",
+      caption: photo.caption || "",
+      createdISO: photo.createdISO || "",
+      sourceTripId: photo.sourceTripId || "",
+      extractedText: photoExtractedText(photo)
+    }));
+    const trip = linkedTrip ? {
+      id: linkedTrip.id,
+      date: linkedTrip.date || "",
+      startISO: linkedTrip.startISO || "",
+      endISO: linkedTrip.endISO || "",
+      startTime: linkedTrip.startTime || "",
+      endTime: linkedTrip.endTime || "",
+      customer: linkedTrip.customer || "",
+      vendor: linkedTrip.vendor || "",
+      projectNumber: linkedTrip.projectNumber || "",
+      purpose: linkedTrip.purpose || "",
+      notes: linkedTrip.notes || "",
+      startOdometer: linkedTrip.startOdometer ?? "",
+      endOdometer: linkedTrip.endOdometer ?? "",
+      miles: linkedTrip.miles ?? "",
+      gpsRouteMiles: linkedTrip.gpsRouteMiles ?? "",
+      startLocation: linkedTrip.startLocation || null,
+      endLocation: linkedTrip.endLocation || null,
+      staGenerated: Boolean(linkedTrip.staGenerated),
+      staFileName: linkedTrip.staFileName || ""
+    } : snapshot;
+    return JSON.stringify({
+      schema: "mileage-logger-inspection-handoff",
+      schemaVersion: 1,
+      generatedISO: new Date().toISOString(),
+      recordKey: handoffRecordKey(inspection),
+      matching: {
+        projectNumber: inspection.projectNumber || "",
+        inspectionDate: inspection.date || "",
+        vendor: inspection.vendor || ""
+      },
+      inspection: {
+        ...inspection,
+        photos: photoRecords
+      },
+      trip,
+      notes: {
+        summary: inspection.summary || "",
+        observations: inspection.observations || "",
+        deficiencies: inspection.deficiencies || "",
+        openFollowUps: inspectionFollowUpText(inspection, "Open"),
+        closedFollowUps: inspectionFollowUpText(inspection, "Closed"),
+        photoText: photoRecords.map((photo) => ({
+          filename: photo.filename,
+          caption: photo.caption,
+          extractedText: photo.extractedText
+        }))
+      },
+      sta: {
+        generated: Boolean((trip || snapshot)?.staGenerated),
+        filename: (trip || snapshot)?.staFileName || ""
+      }
+    }, null, 2);
   }
 
   function buildPhotoIndexHtml(inspection, photos) {
@@ -2095,12 +2238,13 @@
   async function deliverInspectionPackage(filename, blob) {
     const file = new File([blob], filename, { type: "application/zip" });
     const touchDevice = navigator.maxTouchPoints > 0 || window.matchMedia?.("(pointer: coarse)")?.matches;
-    if (touchDevice && navigator.share && navigator.canShare?.({ files: [file] })) {
+    const forceDownload = new URLSearchParams(window.location.search).get("download") === "1";
+    if (!forceDownload && touchDevice && navigator.share && navigator.canShare?.({ files: [file] })) {
       try {
         // Share only the file. On iOS, including a text message alongside a ZIP
         // can cause Save to Files to save the message as a .txt file instead.
         await navigator.share({ files: [file] });
-        showInspectionToast("Inspection package shared.");
+        showInspectionToast("Handoff ready. Save it in OneDrive > Inspection Handoffs.");
         return;
       } catch (error) {
         if (error?.name === "AbortError") {
@@ -2119,7 +2263,7 @@
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
-    showInspectionToast("Inspection package downloaded.");
+    showInspectionToast("Handoff downloaded. Move it to OneDrive > Inspection Handoffs.");
   }
 
   async function exportInspectionPackage(inspection, button) {
@@ -2127,7 +2271,7 @@
       window.alert("The ZIP component is unavailable. Reopen the app while online and try again.");
       return;
     }
-    const originalText = button?.textContent || "Export Package";
+    const originalText = button?.textContent || "Send to Inspection Notes";
     if (button) {
       button.disabled = true;
       button.textContent = "Building Package...";
@@ -2140,6 +2284,9 @@
       const html = buildPhotoIndexHtml(inspection, photos);
       const pdf = await buildInspectionPdf(inspection, photos);
       const editableReportFilename = `${baseName}_Editable_Report.docx`;
+      const handoffJson = buildInspectionHandoffJson(inspection, photos);
+      const photoText = buildPhotoTextFile(inspection, photos);
+      const readme = buildHandoffReadme(inspection, baseName);
       const templateRecord = inspectionTemplateInstalled
         ? await readInspectionReportTemplateRecord()
         : null;
@@ -2152,17 +2299,20 @@
         )
         : await buildInspectionDocx(inspection, photos);
       const entries = {
+        ["00_READ_ME_FIRST.txt"]: window.fflate.strToU8(readme),
+        [`${baseName}_Handoff.json`]: window.fflate.strToU8(handoffJson),
         [`${baseName}_Report.pdf`]: pdf,
         [editableReportFilename]: docx,
         [`${baseName}_Update.txt`]: window.fflate.strToU8(updateText),
         [`${baseName}_Data.csv`]: window.fflate.strToU8(csv),
-        [`${baseName}_Photo_Index.html`]: window.fflate.strToU8(html)
+        [`${baseName}_Photo_Index.html`]: window.fflate.strToU8(html),
+        [`${baseName}_Photo_Text.txt`]: window.fflate.strToU8(photoText)
       };
       for (const photo of photos) {
         entries[photo.packagePath] = new Uint8Array(await photo.blob.arrayBuffer());
       }
       const bytes = window.fflate.zipSync(entries, { level: 6 });
-      const filename = `${baseName}_Package.zip`;
+      const filename = `${baseName}_Inspection_Handoff.zip`;
       await deliverInspectionPackage(filename, new Blob([bytes], { type: "application/zip" }));
     } catch (error) {
       console.error("Inspection package export failed:", error);

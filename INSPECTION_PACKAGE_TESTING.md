@@ -13,21 +13,24 @@ Use test information only.
 7. Confirm the trip photo appears in the inspection form and remains present after saving.
 8. Export the inspection package and confirm the inherited trip photo is included.
 
-## Inspection package
+## Inspection Notes handoff
 
 1. Open **Inspections** and create or open a test inspection.
 2. Add at least two photos and give them captions.
 3. Save the inspection.
-4. In **Inspection History**, tap **Export Package**.
-5. Save the ZIP to Files.
+4. In **Inspection History**, tap **Send to Inspection Notes**.
+5. Save the ZIP to **OneDrive > Inspection Handoffs**.
    - On iPhone, the saved item must end in `.zip`.
    - If Files shows a `.txt` file instead, close and reopen the preview so the latest app version loads.
 6. Move or open the ZIP on a computer and extract it.
 7. Confirm the package contains:
+   - `00_READ_ME_FIRST.txt`;
+   - a structured handoff JSON file;
    - a PDF report;
    - an editable Word report;
    - an inspection update text file;
    - an inspection data CSV file;
+   - a photo-text file;
    - an HTML photo index; and
    - a `Photos` folder.
 8. Confirm the PDF opens, includes the inspection information, and shows the attached photos.
@@ -41,7 +44,7 @@ Use test information only.
 1. Open **Inspections**.
 2. Tap **Import S&B Word Template** and choose the approved blank `.docx`.
 3. Confirm the status changes to **INSTALLED**.
-4. Export an inspection package.
+4. Tap **Send to Inspection Notes** on an inspection.
 5. Open the editable Word report and confirm:
    - the S&B branding, header, tables, and footer remain intact;
    - available customer, project, vendor, date, activity, summary, observations, action items, and release information are populated;

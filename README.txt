@@ -53,18 +53,23 @@ CSV
 ---
 CSV is a readable spreadsheet copy but is not the complete restore file. Use the ZIP file as the required backup.
 
-INSPECTION PACKAGES
--------------------
-Open Inspection History and tap Export Package on an inspection record.
+INSPECTION NOTES HANDOFFS
+-------------------------
+Open Inspection History and tap Send to Inspection Notes on an inspection record.
+Save the ZIP in OneDrive > Inspection Handoffs.
 The computer-friendly ZIP contains:
+- A read-me file explaining how to use the handoff
+- A structured JSON record for dependable merging
 - A printable PDF inspection report
 - An editable Word inspection report
 - A plain-text inspection update
 - An Excel-readable CSV data file
+- A photo-text file with captions and any stored extracted text
 - An HTML photo index
 - A Photos folder with normal image filenames
 
-Inspection packages are for reporting and recordkeeping. They do not replace the required full restore backup.
+Project number, inspection date, and vendor form the matching record key. Use it to combine the handoff with transcripts and additional notes in the Summarize Inspection Notes work folder.
+Inspection handoffs are for reporting and recordkeeping. They do not replace the required full restore backup.
 
 ACTIVE TRIP PHOTOS
 ------------------
@@ -78,7 +83,7 @@ PRIVATE S&B WORD REPORT TEMPLATE
 Open Inspections and use Import S&B Word Template.
 Choose the approved blank S&B inspection report in .docx format.
 The template is stored only in this browser on this device and is not uploaded to GitHub or included in backups.
-When installed, Export Package uses the S&B layout for the editable Word report and inserts available inspection data plus up to four attached photos.
+When installed, Send to Inspection Notes uses the S&B layout for the editable Word report and inserts available inspection data plus up to four attached photos.
 Keep the original blank S&B template safely in Files because clearing website data or removing the web app can remove the private imported copy.
 
 TRIP LOG CORRECTIONS
