@@ -190,6 +190,86 @@ button { touch-action: manipulation; }
   margin-top: 12px;
 }
 
+.active-trip-photo-panel {
+  margin-top: 16px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--card), var(--bg) 30%);
+}
+
+.active-trip-photo-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.active-trip-photo-heading span:first-child {
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.active-trip-photo-heading h3 {
+  margin: 3px 0 0;
+}
+
+.active-trip-photo-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.active-trip-photo-card {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.active-trip-photo-preview {
+  min-height: 105px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--card), var(--bg) 45%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.active-trip-photo-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 105px;
+  object-fit: cover;
+}
+
+.active-trip-photo-details {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.active-trip-photo-details strong {
+  overflow-wrap: anywhere;
+}
+
+.active-trip-photo-details input {
+  padding: 9px;
+}
+
+.active-trip-photo-empty {
+  padding: 12px;
+  color: var(--muted);
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+
 .quick-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -524,6 +604,8 @@ hr {
 @media (max-width: 760px) {
   .quick-actions { grid-template-columns: 1fr; }
   .detail-grid { grid-template-columns: 1fr; }
+  .active-trip-photo-card { grid-template-columns: 1fr; }
+  .active-trip-photo-heading { flex-direction: column; }
   .coordinate-grid { grid-template-columns: 1fr; }
   .status-heading { align-items: flex-start; }
   .form-actions,

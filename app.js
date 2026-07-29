@@ -51,6 +51,7 @@
   let pendingVendorGps = null;
   let staContextTripId = null;
   let staMasterBytesPromise = null;
+  let activeTripPhotoObjectUrls = [];
 
   function defaultState() {
     return {
@@ -327,6 +328,111 @@
     return `${Number(location.latitude).toFixed(6)}, ${Number(location.longitude).toFixed(6)} • accuracy ±${Number.isFinite(accuracy) ? Math.round(accuracy) : "?"} m`;
   }
 
+  async function renderActiveTripPhotoGallery() {
+    const list = $("activeTripPhotoList");
+    const count = $("activeTripPhotoCount");
+    const trip = state.activeTrip;
+    activeTripPhotoObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+    activeTripPhotoObjectUrls = [];
+    if (!list || !count || !trip) return;
+
+    const photos = Array.isArray(trip.photos) ? trip.photos : [];
+    count.textContent = String(photos.length);
+    if (!photos.length) {
+      list.innerHTML = `<div class="active-trip-photo-empty">No photos added to this trip yet.</div>`;
+      return;
+    }
+
+    list.innerHTML = photos.map((photo) => `
+      <article class="active-trip-photo-card">
+        <button class="active-trip-photo-preview" type="button" data-view-active-trip-photo="${escapeHTML(photo.id)}" aria-label="Open trip photo">
+          <span>Loading photo…</span>
+        </button>
+        <div class="active-trip-photo-details">
+          <strong>${escapeHTML(photo.name || "Trip photo")}</strong>
+          <label>
+            Caption
+            <input data-active-trip-photo-caption="${escapeHTML(photo.id)}" value="${escapeHTML(photo.caption || "")}" placeholder="What does this photo show?">
+          </label>
+          <button class="button button-danger-outline button-small" type="button" data-remove-active-trip-photo="${escapeHTML(photo.id)}">Remove Photo</button>
+        </div>
+      </article>
+    `).join("");
+
+    if (!window.MileageMediaStore) return;
+    const tripId = trip.id;
+    await Promise.all(photos.map(async (photo) => {
+      try {
+        const stored = await window.MileageMediaStore.getPhoto(photo.id);
+        if (!stored?.blob || state.activeTrip?.id !== tripId) return;
+        const target = list.querySelector(`[data-view-active-trip-photo="${CSS.escape(photo.id)}"]`);
+        if (!target) return;
+        const url = URL.createObjectURL(stored.blob);
+        activeTripPhotoObjectUrls.push(url);
+        target.dataset.photoUrl = url;
+        target.innerHTML = `<img src="${url}" alt="${escapeHTML(photo.caption || photo.name || "Trip photo")}">`;
+      } catch (error) {
+        console.warn("Could not load active-trip photo:", error);
+      }
+    }));
+  }
+
+  async function addActiveTripPhotos(files) {
+    if (!state.activeTrip) {
+      window.alert("Start a trip before adding photos.");
+      return;
+    }
+    if (!window.MileageMediaStore) {
+      window.alert("Private photo storage is unavailable.");
+      return;
+    }
+    const images = [...(files || [])].filter((file) => String(file.type || "").startsWith("image/"));
+    if (!images.length) return;
+
+    const status = $("activeTripPhotoStatus");
+    const tripId = state.activeTrip.id;
+    if (status) {
+      status.textContent = `Preparing ${images.length} photo${images.length === 1 ? "" : "s"}…`;
+      status.className = "gps-status";
+    }
+
+    try {
+      for (let index = 0; index < images.length; index += 1) {
+        if (status) status.textContent = `Preparing photo ${index + 1} of ${images.length}…`;
+        const metadata = await window.MileageMediaStore.addPhoto(tripId, images[index]);
+        if (!state.activeTrip || state.activeTrip.id !== tripId) {
+          await window.MileageMediaStore.deletePhoto(metadata.id);
+          throw new Error("The trip ended before the photo finished saving.");
+        }
+        if (!Array.isArray(state.activeTrip.photos)) state.activeTrip.photos = [];
+        state.activeTrip.photos.push(metadata);
+        saveState();
+      }
+      renderStatus();
+      showToast(`${images.length} photo${images.length === 1 ? "" : "s"} added to the active trip.`);
+    } catch (error) {
+      if (status) {
+        status.textContent = `A photo could not be added: ${error.message}`;
+        status.className = "gps-status bad";
+      }
+      window.alert(`The trip photo could not be added.\n\n${error.message}`);
+    }
+  }
+
+  async function removeActiveTripPhoto(photoId) {
+    if (!state.activeTrip || !photoId) return;
+    if (!window.confirm("Remove this photo from the active trip?")) return;
+    try {
+      await window.MileageMediaStore?.deletePhoto(photoId);
+      state.activeTrip.photos = (state.activeTrip.photos || []).filter((photo) => photo.id !== photoId);
+      saveState();
+      renderStatus();
+      showToast("Photo removed from the active trip.");
+    } catch (error) {
+      window.alert(`The trip photo could not be removed.\n\n${error.message}`);
+    }
+  }
+
   function renderStatus() {
     $("todayLine").textContent = new Date().toLocaleDateString("en-US", {
       weekday: "long",
@@ -367,7 +473,25 @@
           ${trip.trackRoute && routeWatchId === null ? `<button id="resumeRouteBtn" class="button button-secondary button-small" type="button">Resume Route GPS</button>` : ""}
           ${trip.trackRoute && routeWatchId !== null ? `<button id="pauseRouteBtn" class="button button-secondary button-small" type="button">Pause Route GPS</button>` : ""}
         </div>
+        <section class="active-trip-photo-panel" aria-labelledby="activeTripPhotoTitle">
+          <div class="active-trip-photo-heading">
+            <div>
+              <span>Stored privately and included in the required backup</span>
+              <h3 id="activeTripPhotoTitle">Active Trip Photos</h3>
+            </div>
+            <span id="activeTripPhotoCount" class="pill">0</span>
+          </div>
+          <div class="active-controls">
+            <button class="button button-primary button-small" type="button" data-active-trip-photo-action="take">Take Photo</button>
+            <button class="button button-secondary button-small" type="button" data-active-trip-photo-action="choose">Choose Photos</button>
+            <input id="activeTripTakePhotoInput" class="hidden" type="file" accept="image/*" capture="environment">
+            <input id="activeTripChoosePhotosInput" class="hidden" type="file" accept="image/*" multiple>
+          </div>
+          <div id="activeTripPhotoStatus" class="gps-status">Photos stay attached when the trip becomes an inspection record.</div>
+          <div id="activeTripPhotoList" class="active-trip-photo-list"></div>
+        </section>
       `;
+      setTimeout(renderActiveTripPhotoGallery, 0);
       $("startBtn").disabled = true;
       $("endBtn").disabled = false;
     } else {
@@ -419,6 +543,7 @@
       Started ${escapeHTML(trip.date)} at ${escapeHTML(trip.startTime)}<br>
       Starting odometer: ${formatNumber(trip.startOdometer, true)}<br>
       GPS route so far: ${formatNumber(calculateRouteMiles(trip.routePoints || []), true)} miles
+      <br>Trip photos: ${(trip.photos || []).length}
     `;
     $("milesPreview").classList.add("hidden");
     $("gpsComparison").classList.add("hidden");
@@ -1826,7 +1951,8 @@ ${fallbackError.message || error.message}`);
       notes: $("startNotes").value.trim(),
       startLocation: pendingStartLocation,
       trackRoute,
-      routePoints: pendingStartLocation ? [pendingStartLocation] : []
+      routePoints: pendingStartLocation ? [pendingStartLocation] : [],
+      photos: []
     };
 
     state.settings.customers = [...new Set([...state.settings.customers, customer])];
@@ -1944,7 +2070,31 @@ ${fallbackError.message || error.message}`);
     }
   });
 
-  $("activeDetails").addEventListener("click", (event) => {
+  $("activeDetails").addEventListener("click", async (event) => {
+    const photoAction = event.target.closest("[data-active-trip-photo-action]");
+    if (photoAction?.dataset.activeTripPhotoAction === "take") {
+      $("activeTripTakePhotoInput")?.click();
+      return;
+    }
+    if (photoAction?.dataset.activeTripPhotoAction === "choose") {
+      $("activeTripChoosePhotosInput")?.click();
+      return;
+    }
+
+    const viewPhotoButton = event.target.closest("[data-view-active-trip-photo]");
+    if (viewPhotoButton) {
+      const url = viewPhotoButton.dataset.photoUrl;
+      if (url) window.open(url, "_blank", "noopener");
+      else window.alert("The photo is still loading or is unavailable on this device.");
+      return;
+    }
+
+    const removePhotoButton = event.target.closest("[data-remove-active-trip-photo]");
+    if (removePhotoButton) {
+      await removeActiveTripPhoto(removePhotoButton.dataset.removeActiveTripPhoto);
+      return;
+    }
+
     if (event.target.closest("#createStaBtn")) {
       staContextTripId = state.activeTrip?.id || null;
       showSection("staSection");
@@ -1959,6 +2109,24 @@ ${fallbackError.message || error.message}`);
     if (event.target.closest("#pauseRouteBtn")) {
       stopRouteTracking(true);
     }
+  });
+
+  $("activeDetails").addEventListener("change", (event) => {
+    if (event.target.id !== "activeTripTakePhotoInput" && event.target.id !== "activeTripChoosePhotosInput") return;
+    const files = event.target.files;
+    event.target.value = "";
+    addActiveTripPhotos(files);
+  });
+
+  $("activeDetails").addEventListener("input", (event) => {
+    const input = event.target.closest("[data-active-trip-photo-caption]");
+    if (!input || !state.activeTrip) return;
+    const photo = (state.activeTrip.photos || []).find(
+      (item) => item.id === input.dataset.activeTripPhotoCaption
+    );
+    if (!photo) return;
+    photo.caption = input.value;
+    saveState();
   });
 
   $("searchBox").addEventListener("input", renderLog);

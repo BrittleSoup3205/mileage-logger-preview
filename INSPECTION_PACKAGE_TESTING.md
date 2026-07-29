@@ -2,6 +2,17 @@
 
 Use test information only.
 
+## Active trip photos
+
+1. Start a test mileage trip.
+2. In **Active Trip Photos**, take one photo and choose at least one existing photo.
+3. Add a caption, open a thumbnail, and remove one photo.
+4. End the trip and save the required full ZIP backup.
+5. Confirm the backup ZIP contains the remaining trip photo in its `photos` folder.
+6. Create an inspection record from the completed trip.
+7. Confirm the trip photo appears in the inspection form and remains present after saving.
+8. Export the inspection package and confirm the inherited trip photo is included.
+
 ## Inspection package
 
 1. Open **Inspections** and create or open a test inspection.

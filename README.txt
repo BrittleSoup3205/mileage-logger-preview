@@ -66,6 +66,13 @@ The computer-friendly ZIP contains:
 
 Inspection packages are for reporting and recordkeeping. They do not replace the required full restore backup.
 
+ACTIVE TRIP PHOTOS
+------------------
+While a trip is active, use Take Photo or Choose Photos in the Active Trip Photos panel.
+Photos are reduced to a practical size, stored privately on the device, and included in the required full ZIP backup.
+Add an optional caption or remove a photo before ending the trip.
+When the completed trip is used to create an inspection record, its trip photos are automatically available in that inspection.
+
 PRIVATE S&B WORD REPORT TEMPLATE
 --------------------------------
 Open Inspections and use Import S&B Word Template.

@@ -809,10 +809,19 @@
     const state = readState();
     editingInspectionWasExisting = Boolean(inspection);
     editingInspectionId = inspection?.id || makeId();
-    currentPhotos = Array.isArray(inspection?.photos) ? inspection.photos.map((photo) => ({ ...photo })) : [];
-    originalPhotoIds = new Set(currentPhotos.map((photo) => photo.id));
     currentTripId = tripId || inspection?.tripId || "";
     const trip = getTripById(state, currentTripId);
+    const inspectionPhotos = Array.isArray(inspection?.photos)
+      ? inspection.photos.map((photo) => ({ ...photo }))
+      : [];
+    const photoIds = new Set(inspectionPhotos.map((photo) => photo.id));
+    const inheritedTripPhotos = Array.isArray(trip?.photos)
+      ? trip.photos
+        .filter((photo) => !photoIds.has(photo.id))
+        .map((photo) => ({ ...photo, sourceTripId: trip.id }))
+      : [];
+    currentPhotos = [...inspectionPhotos, ...inheritedTripPhotos];
+    originalPhotoIds = new Set(currentPhotos.map((photo) => photo.id));
     const snapshot = inspection?.tripSnapshot || tripSnapshot(trip);
     const values = inspection || {};
 
@@ -2307,10 +2316,13 @@
       const removePhotoButton = event.target.closest("[data-remove-photo]");
       if (removePhotoButton) {
         const photoId = removePhotoButton.dataset.removePhoto;
+        const removedPhoto = collectPhotoMetadata().find((photo) => photo.id === photoId);
         if (!window.confirm("Remove this photo from the inspection?")) return;
         currentPhotos = collectPhotoMetadata().filter((photo) => photo.id !== photoId);
         try {
-          await window.MileageMediaStore?.deletePhoto(photoId);
+          if (!removedPhoto?.sourceTripId) {
+            await window.MileageMediaStore?.deletePhoto(photoId);
+          }
           if (editingInspectionWasExisting && originalPhotoIds.has(photoId)) {
             originalPhotoIds.delete(photoId);
             updateState((state) => {

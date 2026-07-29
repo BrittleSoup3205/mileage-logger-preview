@@ -109,7 +109,7 @@
   }
 
   async function addPhoto(inspectionId, file) {
-    if (!inspectionId) throw new Error("Save or open an inspection before adding a photo.");
+    if (!inspectionId) throw new Error("Start a trip or open an inspection before adding a photo.");
     if (!file || !String(file.type || "").startsWith("image/")) {
       throw new Error("Choose an image file.");
     }
